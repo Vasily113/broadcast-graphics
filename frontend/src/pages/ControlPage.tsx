@@ -1,0 +1,928 @@
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  ArrowLeft, Tv, RefreshCw, ChevronDown, ChevronRight, Zap,
+  GripVertical, Plus, X, SkipBack, SkipForward, Square, List, Layers, Monitor,
+} from 'lucide-react';
+import { DndContext, DragEndEvent, closestCenter } from '@dnd-kit/core';
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Template, Variable } from '../core/schema';
+import { TemplateThumbnail } from '../features/templates/TemplateThumbnail';
+
+type Command =
+  | { type: 'take'; templateId: string; template: Template; variables: Record<string, string> }
+  | { type: 'clear'; templateId: string }
+  | { type: 'update'; templateId: string; variables: Record<string, string> };
+
+type WsStatus = 'connecting' | 'connected' | 'disconnected';
+
+interface TemplateListItem { id: string; name: string; updated_at: number; }
+interface FullTemplate extends TemplateListItem { data: Template; }
+interface RundownSlot { slotId: string; templateId: string; name: string; vars: Record<string, string>; }
+
+// ── WebSocket hook ────────────────────────────────────────────────────────────
+
+function useControlWs() {
+  const wsRef = useRef<WebSocket | null>(null);
+  const [status, setStatus] = useState<WsStatus>('disconnected');
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const connect = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/control`);
+    wsRef.current = ws;
+    setStatus('connecting');
+    ws.onopen = () => setStatus('connected');
+    ws.onclose = () => { setStatus('disconnected'); reconnectTimer.current = setTimeout(connect, 3000); };
+    ws.onerror = () => ws.close();
+  }, []);
+
+  useEffect(() => {
+    connect();
+    return () => { reconnectTimer.current && clearTimeout(reconnectTimer.current); wsRef.current?.close(); };
+  }, [connect]);
+
+  const send = useCallback((cmd: Command) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify(cmd));
+  }, []);
+
+  return { status, send, reconnect: connect };
+}
+
+// ── Status badge ─────────────────────────────────────────────────────────────
+
+function WsStatusBadge({ status, onReconnect }: { status: WsStatus; onReconnect: () => void }) {
+  const cfg = {
+    connected:    { dot: 'bg-green-400',                text: 'Подключено',     color: 'text-green-400'  },
+    connecting:   { dot: 'bg-yellow-400 animate-pulse', text: 'Подключение...', color: 'text-yellow-400' },
+    disconnected: { dot: 'bg-red-500',                  text: 'Нет связи',      color: 'text-red-400'    },
+  }[status];
+  return (
+    <div className="flex items-center gap-2">
+      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${cfg.dot}`} />
+      <span className={`text-xs ${cfg.color}`}>{cfg.text}</span>
+      {status === 'disconnected' && (
+        <button onClick={onReconnect} className="text-gray-500 hover:text-white" title="Переподключиться">
+          <RefreshCw size={13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Template card ─────────────────────────────────────────────────────────────
+
+function TemplateCard({
+  item, onAir, onTake, onClear, onUpdate, isSelected, focused, onSelect, onVarsChange,
+}: {
+  item: TemplateListItem;
+  onAir: boolean;
+  onTake: (id: string, vars: Record<string, string>) => void;
+  onClear: (id: string) => void;
+  onUpdate: (id: string, vars: Record<string, string>) => void;
+  isSelected: boolean;
+  focused: boolean;
+  onSelect: (template: Template, vars: Record<string, string>) => void;
+  onVarsChange: (vars: Record<string, string>) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [full, setFull] = useState<FullTemplate | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [vars, setVars] = useState<Record<string, string>>({});
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onAirRef = useRef(onAir);
+  useEffect(() => { onAirRef.current = onAir; }, [onAir]);
+
+  const loadFull = async (): Promise<FullTemplate> => {
+    if (full) return full;
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/templates/${item.id}`);
+      const row: FullTemplate = await r.json();
+      setFull(row);
+      const defaults: Record<string, string> = {};
+      (row.data?.variables ?? []).forEach((v: Variable) => { defaults[v.id] = String(v.defaultValue ?? ''); });
+      setVars(defaults);
+      return row;
+    } finally { setLoading(false); }
+  };
+
+  const expand = async () => {
+    if (!expanded && !full) await loadFull();
+    setExpanded((v) => !v);
+  };
+
+  const handleSelect = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const row = await loadFull();
+    // Build vars: use current state if already populated, else default from template
+    const defaults: Record<string, string> = {};
+    (row.data?.variables ?? []).forEach((v: Variable) => { defaults[v.id] = String(v.defaultValue ?? ''); });
+    const currentVars = Object.keys(vars).length > 0 ? vars : defaults;
+    onSelect(row.data, currentVars);
+  };
+
+  const handleVarChange = (id: string, value: string) => {
+    const next = { ...vars, [id]: value };
+    setVars(next);
+    if (onAirRef.current) {
+      debounceRef.current && clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => onUpdate(item.id, next), 300);
+    }
+    onVarsChange(next);
+  };
+
+  const variables: Variable[] = full?.data?.variables ?? [];
+
+  return (
+    <div className={`rounded-xl border transition-colors overflow-hidden ${
+      onAir ? 'border-red-500 bg-red-500/5' :
+      isSelected ? 'border-accent-500 bg-accent-500/5' :
+      'border-surface-600 bg-surface-800 hover:border-surface-500'
+    } ${focused && !onAir && !isSelected ? 'ring-2 ring-white/30' : ''}`}>
+      {/* Main row */}
+      <div className="flex items-center gap-3 px-3 py-2">
+        {/* Thumbnail — click to preview */}
+        <div
+          className="flex-shrink-0 w-24 h-[54px] rounded overflow-hidden bg-surface-700 cursor-pointer ring-0 hover:ring-1 hover:ring-accent-500 transition-all"
+          onClick={handleSelect}
+          title="Предпросмотр"
+        >
+          <TemplateThumbnail templateId={item.id} width={192} height={108} className="w-full h-full" />
+        </div>
+
+        {/* Name + badges — click to preview */}
+        <div className="flex-1 min-w-0 cursor-pointer" onClick={handleSelect}>
+          <span className="block font-medium text-white text-sm truncate">{item.name}</span>
+          <div className="flex items-center gap-2 mt-0.5">
+            {onAir
+              ? <span className="px-1.5 py-0.5 bg-red-600 rounded text-[10px] font-bold text-white tracking-widest animate-pulse">ON AIR</span>
+              : isSelected
+                ? <span className="px-1.5 py-0.5 bg-accent-500/20 rounded text-[10px] text-accent-400">PVW</span>
+                : <span className="w-1.5 h-1.5 rounded-full bg-surface-600 inline-block" />
+            }
+            {onAir && variables.length > 0 && (
+              <span className="flex items-center gap-1 text-[10px] text-green-400" title="Live update активен">
+                <Zap size={9} className="fill-green-400" /> Live
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Controls */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <button onClick={expand} className="text-gray-600 hover:text-white transition-colors p-1">
+            {loading ? <RefreshCw size={13} className="animate-spin" /> : expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          </button>
+          <button
+            onClick={() => onTake(item.id, vars)}
+            className={`px-3 py-1.5 rounded text-xs font-bold transition-colors ${
+              onAir ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-accent-500 hover:bg-accent-600 text-white'
+            }`}
+          >TAKE</button>
+          <button
+            onClick={() => onClear(item.id)}
+            disabled={!onAir}
+            className="px-3 py-1.5 rounded text-xs font-medium bg-surface-700 hover:bg-surface-600 disabled:opacity-30 text-gray-300 transition-colors"
+          >CLEAR</button>
+        </div>
+      </div>
+
+      {/* Variables panel */}
+      {expanded && (
+        <div className="border-t border-surface-700 px-3 py-2.5 space-y-2 bg-surface-800/60">
+          {variables.length === 0 ? (
+            <p className="text-xs text-gray-500 italic">Нет переменных</p>
+          ) : (
+            variables.map((v) => (
+              <div key={v.id} className="flex items-center gap-2">
+                <label className="text-xs text-gray-400 w-28 flex-shrink-0 truncate" title={v.label}>{v.label || v.name}</label>
+                {v.type === 'color' ? (
+                  <div className="flex items-center gap-1.5 flex-1">
+                    <input type="color" value={vars[v.id] ?? String(v.defaultValue)} onChange={(e) => handleVarChange(v.id, e.target.value)}
+                      className="w-7 h-6 rounded cursor-pointer border-0 bg-transparent p-0" />
+                    <input type="text" value={vars[v.id] ?? String(v.defaultValue)} onChange={(e) => handleVarChange(v.id, e.target.value)}
+                      className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:border-accent-500" />
+                  </div>
+                ) : (
+                  <input type={v.type === 'number' ? 'number' : 'text'} value={vars[v.id] ?? String(v.defaultValue)}
+                    onChange={(e) => handleVarChange(v.id, e.target.value)} placeholder={String(v.defaultValue)}
+                    className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:border-accent-500" />
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── Sortable rundown row ──────────────────────────────────────────────────────
+
+function SortableRundownRow({
+  slot, index, status, focused, full, expanded,
+  onTake, onClear, onRemove, onToggleExpand, onVarChange, onNeedFull, onFocus,
+}: {
+  slot: RundownSlot;
+  index: number;
+  status: 'on-air' | 'next' | 'played' | 'pending';
+  focused: boolean;
+  full: FullTemplate | null;
+  expanded: boolean;
+  onTake: () => void;
+  onClear: () => void;
+  onRemove: () => void;
+  onToggleExpand: () => void;
+  onVarChange: (varId: string, value: string) => void;
+  onNeedFull: () => void;
+  onFocus: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: slot.slotId });
+  const variables: Variable[] = full?.data?.variables ?? [];
+
+  return (
+    <div
+      id={`rd-slot-${slot.slotId}`}
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}
+      className={`rounded-lg border transition-colors overflow-hidden cursor-pointer ${
+        status === 'on-air' ? 'border-red-500 bg-red-500/10' :
+        status === 'next'   ? 'border-accent-500/60 bg-accent-500/5' :
+        status === 'played' ? 'border-surface-700 bg-surface-800/40 opacity-50' :
+                              'border-surface-700 bg-surface-800'
+      } ${focused && status !== 'on-air' ? 'ring-2 ring-white/30' : ''}`}
+      onClick={onFocus}
+    >
+      {/* Row header */}
+      <div className="flex items-center gap-3 px-3 py-2.5">
+        <div {...attributes} {...listeners} className="text-gray-600 hover:text-gray-400 cursor-grab active:cursor-grabbing flex-shrink-0">
+          <GripVertical size={13} />
+        </div>
+
+        <div className="flex-shrink-0 w-20 h-[45px] rounded overflow-hidden border border-surface-600 bg-surface-700">
+          <TemplateThumbnail
+            template={full?.data ?? null}
+            vars={slot.vars}
+            onNeedFull={onNeedFull}
+            width={160}
+            height={90}
+            className="w-full h-full"
+          />
+        </div>
+
+        <span className="text-xs w-4 flex-shrink-0 text-center" style={{ color: focused ? '#e2e8f0' : 'transparent' }}>▶</span>
+        <span className="text-xs text-gray-500 w-4 flex-shrink-0 text-center">{index + 1}</span>
+        <span className="flex-1 text-sm text-white truncate">{slot.name}</span>
+
+        {status === 'on-air' && (
+          <span className="px-2 py-0.5 bg-red-600 rounded text-xs font-bold text-white tracking-widest animate-pulse flex-shrink-0">ON AIR</span>
+        )}
+        {status === 'on-air' && variables.length > 0 && (
+          <span className="flex items-center gap-1 text-xs text-green-400 flex-shrink-0" title="Live update активен">
+            <Zap size={11} className="fill-green-400" /> Live
+          </span>
+        )}
+        {status === 'next' && (
+          <span className="px-2 py-0.5 bg-accent-500/20 rounded text-xs text-accent-400 flex-shrink-0">NEXT</span>
+        )}
+
+        {/* Expand toggle — only show if template has variables or is loading */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}
+          className="text-gray-600 hover:text-gray-300 flex-shrink-0 transition-colors"
+          title="Переменные"
+        >
+          {expanded
+            ? <ChevronDown size={13} />
+            : <ChevronRight size={13} />}
+        </button>
+
+        {status === 'on-air' ? (
+          <button onClick={(e) => { e.stopPropagation(); onClear(); }} className="px-2.5 py-1 rounded text-xs font-bold flex-shrink-0 bg-red-600 hover:bg-red-500 text-white transition-colors">CLEAR</button>
+        ) : (
+          <button onClick={(e) => { e.stopPropagation(); onTake(); }} className="px-2.5 py-1 rounded text-xs font-bold flex-shrink-0 bg-accent-500 hover:bg-accent-600 text-white transition-colors">TAKE</button>
+        )}
+
+        <button onClick={(e) => { e.stopPropagation(); onRemove(); }} className="text-gray-600 hover:text-red-400 flex-shrink-0 transition-colors">
+          <X size={14} />
+        </button>
+      </div>
+
+      {/* Variable panel */}
+      {expanded && (
+        <div className="border-t border-surface-700 px-3 py-2.5 bg-surface-800/60 space-y-2">
+          {full === null ? (
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              <RefreshCw size={11} className="animate-spin" /> Загрузка...
+            </div>
+          ) : variables.length === 0 ? (
+            <p className="text-xs text-gray-500 italic">Нет переменных</p>
+          ) : (
+            variables.map((v) => {
+              const val = slot.vars[v.id] ?? String(v.defaultValue ?? '');
+              return (
+                <div key={v.id} className="flex items-center gap-2">
+                  <label className="text-xs text-gray-400 w-24 flex-shrink-0 truncate" title={v.label || v.name}>
+                    {v.label || v.name}
+                  </label>
+                  {v.type === 'color' ? (
+                    <div className="flex items-center gap-1.5 flex-1">
+                      <input type="color" value={val} onChange={(e) => onVarChange(v.id, e.target.value)}
+                        className="w-7 h-6 rounded cursor-pointer border-0 bg-transparent p-0" />
+                      <input type="text" value={val} onChange={(e) => onVarChange(v.id, e.target.value)}
+                        className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:border-accent-500" />
+                    </div>
+                  ) : (
+                    <input
+                      type={v.type === 'number' ? 'number' : 'text'}
+                      value={val}
+                      onChange={(e) => onVarChange(v.id, e.target.value)}
+                      placeholder={String(v.defaultValue ?? '')}
+                      className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:border-accent-500"
+                    />
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
+
+export function ControlPage() {
+  const navigate = useNavigate();
+  const [tab, setTab] = useState<'templates' | 'rundown'>('templates');
+  const [templates, setTemplates] = useState<TemplateListItem[]>([]);
+  const [onAirSet, setOnAirSet] = useState<Set<string>>(new Set());
+  const [fullCache, setFullCache] = useState<Record<string, FullTemplate>>({});
+  const { status, send, reconnect } = useControlWs();
+
+  // ── Preview panel ───────────────────────────────────────────────────────
+  const previewRef = useRef<HTMLIFrameElement>(null);
+  const iframeReadyRef = useRef(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [previewName, setPreviewName] = useState('');
+  const previewIdRef = useRef<string | null>(null);
+  const pendingPreviewRef = useRef<{ template: Template; vars: Record<string, string> } | null>(null);
+
+  const doTakePreview = useCallback((template: Template, vars: Record<string, string>) => {
+    previewRef.current?.contentWindow?.postMessage(
+      { type: 'take', templateId: '__preview__', template, variables: vars }, '*'
+    );
+  }, []);
+
+  const selectPreview = useCallback((id: string, name: string, template: Template, vars: Record<string, string>) => {
+    setPreviewId(id);
+    setPreviewName(name);
+    previewIdRef.current = id;
+    if (iframeReadyRef.current) {
+      doTakePreview(template, vars);
+    } else {
+      pendingPreviewRef.current = { template, vars };
+    }
+  }, [doTakePreview]);
+
+  const livePreviewUpdate = useCallback((id: string, vars: Record<string, string>) => {
+    if (id !== previewIdRef.current) return;
+    previewRef.current?.contentWindow?.postMessage(
+      { type: 'update', templateId: '__preview__', variables: vars }, '*'
+    );
+  }, []);
+
+  // ── Template tab keyboard focus ─────────────────────────────────────────
+  const [tmplFocusIdx, setTmplFocusIdx] = useState(0);
+
+  // Clamp when list changes
+  useEffect(() => {
+    if (templates.length > 0) setTmplFocusIdx((i) => Math.min(i, templates.length - 1));
+  }, [templates.length]);
+
+  // Scroll focused card into view
+  useEffect(() => {
+    if (tab !== 'templates' || templates.length === 0) return;
+    document.getElementById(`tmpl-card-${templates[tmplFocusIdx]?.id}`)
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [tmplFocusIdx, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Template tab state ──────────────────────────────────────────────────
+  const handleTake = useCallback(async (id: string, vars: Record<string, string>) => {
+    // Always fetch fresh so the renderer gets the latest saved version
+    const r = await fetch(`/api/templates/${id}`);
+    const fresh = await r.json();
+    setFullCache((s) => ({ ...s, [id]: fresh }));
+    send({ type: 'take', templateId: id, template: fresh.data, variables: vars });
+    setOnAirSet((s) => new Set(s).add(id));
+  }, [send]);
+
+  const handleClear = useCallback((id: string) => {
+    send({ type: 'clear', templateId: id });
+    setOnAirSet((s) => { const n = new Set(s); n.delete(id); return n; });
+  }, [send]);
+
+  const handleUpdate = useCallback((id: string, vars: Record<string, string>) => {
+    send({ type: 'update', templateId: id, variables: vars });
+  }, [send]);
+
+  useEffect(() => {
+    fetch('/api/templates').then((r) => r.json()).then(setTemplates);
+  }, []);
+
+  // ── Rundown state ───────────────────────────────────────────────────────
+  const [rundown, setRundown] = useState<RundownSlot[]>(() => {
+    try {
+      const saved = localStorage.getItem('broadcast-rundown');
+      return saved ? (JSON.parse(saved) as RundownSlot[]) : [];
+    } catch { return []; }
+  });
+  const [rdOnAirSet, setRdOnAirSet] = useState<Set<string>>(new Set());
+  const [rdFocusIdx, setRdFocusIdx] = useState(0);
+
+  useEffect(() => {
+    localStorage.setItem('broadcast-rundown', JSON.stringify(rundown));
+  }, [rundown]);
+
+  // Clamp focus when rundown shrinks
+  useEffect(() => {
+    if (rundown.length > 0) setRdFocusIdx(i => Math.min(i, rundown.length - 1));
+  }, [rundown.length]);
+
+  // Scroll focused item into view
+  useEffect(() => {
+    if (rdFocusIdx >= 0 && rundown[rdFocusIdx]) {
+      document.getElementById(`rd-slot-${rundown[rdFocusIdx].slotId}`)
+        ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [rdFocusIdx]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const [expandedSlots, setExpandedSlots] = useState<Set<string>>(new Set());
+  const liveUpdateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const rdFetchTemplate = useCallback(async (templateId: string): Promise<FullTemplate> => {
+    if (fullCache[templateId]) return fullCache[templateId];
+    const r = await fetch(`/api/templates/${templateId}`);
+    const data = await r.json();
+    setFullCache((s) => ({ ...s, [templateId]: data }));
+    return data;
+  }, [fullCache]);
+
+  const tmplTakeAt = useCallback(async (index: number) => {
+    if (index < 0 || index >= templates.length) return;
+    const item = templates[index];
+    const full = fullCache[item.id] ?? await rdFetchTemplate(item.id);
+    const vars: Record<string, string> = {};
+    (full.data?.variables ?? []).forEach((v: Variable) => { vars[v.id] = String(v.defaultValue ?? ''); });
+    await handleTake(item.id, vars);
+  }, [templates, fullCache, rdFetchTemplate, handleTake]);
+
+  const toggleSlotExpand = useCallback((slotId: string) => {
+    setExpandedSlots((prev) => {
+      const next = new Set(prev);
+      if (next.has(slotId)) { next.delete(slotId); return next; }
+      next.add(slotId);
+      return next;
+    });
+    // Pre-fetch template so variables appear immediately on expand
+    const slot = rundown.find((s) => s.slotId === slotId);
+    if (slot && !fullCache[slot.templateId]) rdFetchTemplate(slot.templateId);
+  }, [rundown, fullCache, rdFetchTemplate]);
+
+  const updateSlotVar = useCallback((slotId: string, varId: string, value: string) => {
+    setRundown((prev) => prev.map((s) =>
+      s.slotId === slotId ? { ...s, vars: { ...s.vars, [varId]: value } } : s
+    ));
+
+    // Live update if this slot is currently on-air
+    if (!rdOnAirSet.has(slotId)) return;
+    const slot = rundown.find((s) => s.slotId === slotId);
+    if (!slot) return;
+    const full = fullCache[slot.templateId];
+    if (!full) return;
+
+    liveUpdateTimer.current && clearTimeout(liveUpdateTimer.current);
+    liveUpdateTimer.current = setTimeout(() => {
+      const vars: Record<string, string> = {};
+      (full.data?.variables ?? []).forEach((v: Variable) => {
+        vars[v.id] = slot.vars[v.id] ?? String(v.defaultValue ?? '');
+      });
+      vars[varId] = value; // apply the latest change
+      send({ type: 'update', templateId: slotId, variables: vars });
+    }, 300);
+  }, [rundown, rdOnAirSet, fullCache, send]);
+
+  const rdTakeAt = useCallback(async (index: number) => {
+    if (index < 0 || index >= rundown.length) return;
+    const slot = rundown[index];
+    // Always fetch fresh so the renderer gets the latest saved version
+    const r = await fetch(`/api/templates/${slot.templateId}`);
+    const full: FullTemplate = await r.json();
+    setFullCache((s) => ({ ...s, [slot.templateId]: full }));
+    const vars: Record<string, string> = {};
+    (full.data?.variables ?? []).forEach((v: Variable) => {
+      vars[v.id] = slot.vars[v.id] ?? String(v.defaultValue ?? '');
+    });
+    send({ type: 'take', templateId: slot.slotId, template: full.data, variables: vars });
+    setOnAirSet((s) => new Set(s).add(slot.slotId));
+    setRdOnAirSet((s) => new Set(s).add(slot.slotId));
+  }, [rundown, send]);
+
+  const rdClearSlot = useCallback((slotId: string) => {
+    send({ type: 'clear', templateId: slotId });
+    setOnAirSet((s) => { const n = new Set(s); n.delete(slotId); return n; });
+    setRdOnAirSet((s) => { const n = new Set(s); n.delete(slotId); return n; });
+  }, [send]);
+
+  // Keyboard navigation for rundown tab
+  useEffect(() => {
+    if (tab !== 'rundown') return;
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setRdFocusIdx(i => Math.min(i + 1, rundown.length - 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setRdFocusIdx(i => Math.max(i - 1, 0));
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        if (rundown.length === 0) return;
+        const idx = Math.max(0, Math.min(rdFocusIdx, rundown.length - 1));
+        rdTakeAt(idx);
+        setRdFocusIdx(Math.min(idx + 1, rundown.length - 1));
+      } else if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        if (rundown.length === 0) return;
+        const slot = rundown[Math.min(rdFocusIdx, rundown.length - 1)];
+        if (slot && rdOnAirSet.has(slot.slotId)) rdClearSlot(slot.slotId);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [tab, rundown, rdFocusIdx, rdTakeAt, rdOnAirSet, rdClearSlot]);
+
+  const rdClearAll = useCallback(() => {
+    rdOnAirSet.forEach((slotId) => {
+      send({ type: 'clear', templateId: slotId });
+      setOnAirSet((s) => { const n = new Set(s); n.delete(slotId); return n; });
+    });
+    setRdOnAirSet(new Set());
+  }, [rdOnAirSet, send]);
+
+  // Auto-preview focused rundown slot
+  useEffect(() => {
+    if (tab !== 'rundown' || rundown.length === 0) return;
+    const slot = rundown[Math.min(rdFocusIdx, rundown.length - 1)];
+    if (!slot) return;
+    const doPreview = (f: FullTemplate) => {
+      const vars: Record<string, string> = {};
+      (f.data?.variables ?? []).forEach((v: Variable) => { vars[v.id] = slot.vars[v.id] ?? String(v.defaultValue ?? ''); });
+      selectPreview(slot.slotId, slot.name, f.data, vars);
+    };
+    const cached = fullCache[slot.templateId];
+    if (cached) { doPreview(cached); return; }
+    rdFetchTemplate(slot.templateId).then(doPreview);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, rdFocusIdx, rundown.length]);
+
+  const rdRemoveSlot = useCallback((slotId: string) => {
+    if (rdOnAirSet.has(slotId)) rdClearSlot(slotId);
+    setRundown((prev) => prev.filter((s) => s.slotId !== slotId));
+  }, [rdOnAirSet, rdClearSlot]);
+
+  const rdHandleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setRundown((prev) => {
+      const from = prev.findIndex((s) => s.slotId === active.id);
+      const to = prev.findIndex((s) => s.slotId === over.id);
+      if (from === -1 || to === -1) return prev;
+      const next = [...prev];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
+  }, []);
+
+  // Auto-preview focused template card
+  useEffect(() => {
+    if (tab !== 'templates' || templates.length === 0) return;
+    const item = templates[Math.min(tmplFocusIdx, templates.length - 1)];
+    if (!item) return;
+    const doPreview = (f: FullTemplate) => {
+      const vars: Record<string, string> = {};
+      (f.data?.variables ?? []).forEach((v: Variable) => { vars[v.id] = String(v.defaultValue ?? ''); });
+      selectPreview(item.id, item.name, f.data, vars);
+    };
+    const cached = fullCache[item.id];
+    if (cached) { doPreview(cached); return; }
+    rdFetchTemplate(item.id).then(doPreview);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, tmplFocusIdx, templates.length]);
+
+  // Keyboard navigation for templates tab
+  useEffect(() => {
+    if (tab !== 'templates') return;
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setTmplFocusIdx((i) => Math.min(i + 1, templates.length - 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setTmplFocusIdx((i) => Math.max(i - 1, 0));
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        tmplTakeAt(tmplFocusIdx);
+      } else if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        const item = templates[tmplFocusIdx];
+        if (item && onAirSet.has(item.id)) handleClear(item.id);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [tab, templates, tmplFocusIdx, tmplTakeAt, onAirSet, handleClear]);
+
+  const canNext = rdFocusIdx < rundown.length - 1;
+  const canPrev = rdFocusIdx > 0;
+
+  return (
+    <div className="h-screen bg-surface-900 flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="h-14 bg-surface-800 border-b border-surface-700 flex items-center px-4 gap-3 flex-shrink-0">
+        <button onClick={() => navigate('/templates')} className="p-1.5 hover:bg-surface-700 rounded text-gray-400">
+          <ArrowLeft size={16} />
+        </button>
+        <div className="w-px h-5 bg-surface-600" />
+        <Tv size={16} className="text-gray-400" />
+        <span className="font-semibold text-white text-sm">Control Panel</span>
+        {onAirSet.size > 0 && (
+          <span className="px-2 py-0.5 bg-red-600 rounded text-xs font-bold text-white tracking-widest">
+            {onAirSet.size} ON AIR
+          </span>
+        )}
+        <div className="flex-1" />
+        <WsStatusBadge status={status} onReconnect={reconnect} />
+      </div>
+
+      {/* Tab bar */}
+      <div className="flex border-b border-surface-700 bg-surface-800 flex-shrink-0">
+        <button
+          onClick={() => setTab('templates')}
+          className={`flex items-center gap-2 px-5 py-2.5 text-xs font-medium border-b-2 transition-colors ${
+            tab === 'templates' ? 'border-accent-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'
+          }`}
+        >
+          <Layers size={13} /> Шаблоны
+        </button>
+        <button
+          onClick={() => setTab('rundown')}
+          className={`flex items-center gap-2 px-5 py-2.5 text-xs font-medium border-b-2 transition-colors ${
+            tab === 'rundown' ? 'border-accent-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'
+          }`}
+        >
+          <List size={13} /> Rundown
+          {rundown.length > 0 && (
+            <span className="px-1.5 py-0.5 bg-surface-600 rounded-full text-gray-400">{rundown.length}</span>
+          )}
+        </button>
+      </div>
+
+      {/* Body: main tabs + preview panel */}
+      <div className="flex-1 flex overflow-hidden min-h-0">
+
+      {/* Main tab content */}
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+
+      {/* Templates tab */}
+      {tab === 'templates' && (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Hints + CLEAR ALL bar */}
+          <div className="flex items-center gap-3 px-4 py-2 border-b border-surface-700 bg-surface-800/50 flex-shrink-0">
+            <span className="text-xs text-gray-600 select-none flex items-center gap-2">
+              <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>↑↓</kbd>
+              <span>навигация</span>
+              <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>⎵</kbd>
+              <span>взять</span>
+              <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>⌫</kbd>
+              <span>убрать</span>
+            </span>
+            <div className="flex-1" />
+            {onAirSet.size > 0 && (
+              <>
+                <span className="text-xs text-gray-400">{onAirSet.size} в эфире</span>
+                <button
+                  onClick={() => { onAirSet.forEach(id => handleClear(id)); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-surface-700 hover:bg-surface-600 text-gray-300 transition-colors"
+                >
+                  <Square size={12} /> CLEAR ALL
+                </button>
+              </>
+            )}
+          </div>
+          <div className="flex-1 overflow-y-auto p-3">
+            {templates.length === 0 ? (
+              <div className="text-center py-24 text-gray-600">
+                <p className="text-lg">Нет шаблонов</p>
+                <button onClick={() => navigate('/templates')} className="mt-3 text-sm text-accent-400 hover:text-accent-300">
+                  Перейти к шаблонам →
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {templates.map((t, i) => (
+                  <div key={t.id} id={`tmpl-card-${t.id}`} onClick={() => setTmplFocusIdx(i)}>
+                    <TemplateCard
+                      item={t}
+                      onAir={onAirSet.has(t.id)}
+                      onTake={handleTake} onClear={handleClear} onUpdate={handleUpdate}
+                      isSelected={previewId === t.id}
+                      focused={tmplFocusIdx === i}
+                      onSelect={(template, vars) => { setTmplFocusIdx(i); selectPreview(t.id, t.name, template, vars); }}
+                      onVarsChange={(vars) => livePreviewUpdate(t.id, vars)}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Rundown tab */}
+      {tab === 'rundown' && (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Transport bar */}
+          <div className="flex items-center gap-3 px-6 py-3 border-b border-surface-700 bg-surface-800/50 flex-shrink-0">
+            <button
+              onClick={() => { const i = rdFocusIdx - 1; setRdFocusIdx(Math.max(0, i)); rdTakeAt(Math.max(0, i)); }}
+              disabled={!canPrev}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-surface-700 hover:bg-surface-600 disabled:opacity-30 text-gray-300 transition-colors"
+              title="Предыдущий"
+            >
+              <SkipBack size={13} /> PREV
+            </button>
+
+            <span className="text-xs text-gray-500 min-w-[3rem] text-center">
+              {rdFocusIdx + 1} / {rundown.length || '—'}
+            </span>
+
+            <button
+              onClick={() => { const i = rdFocusIdx + 1; setRdFocusIdx(Math.min(rundown.length - 1, i)); rdTakeAt(i); }}
+              disabled={!canNext}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded text-xs font-bold bg-accent-500 hover:bg-accent-600 disabled:opacity-30 text-white transition-colors"
+              title="Следующий"
+            >
+              NEXT <SkipForward size={13} />
+            </button>
+
+            <button
+              onClick={rdClearAll}
+              disabled={rdOnAirSet.size === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-surface-700 hover:bg-surface-600 disabled:opacity-30 text-gray-300 transition-colors"
+              title="Убрать всё из эфира"
+            >
+              <Square size={12} /> CLEAR ALL
+            </button>
+
+            <div className="flex-1" />
+            <span className="text-xs text-gray-600 select-none hidden sm:flex items-center gap-2">
+              <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>↑↓</kbd>
+              <span>навигация</span>
+              <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>⎵</kbd>
+              <span>взять</span>
+              <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>⌫</kbd>
+              <span>убрать</span>
+            </span>
+          </div>
+
+          {/* Rundown list */}
+          <div className="flex-1 overflow-y-auto p-6">
+            <div className="max-w-3xl mx-auto space-y-2">
+              {rundown.length === 0 ? (
+                <div className="text-center py-16 text-gray-600">
+                  <List size={32} className="mx-auto mb-3 opacity-30" />
+                  <p className="text-sm">Rundown пустой</p>
+                  <p className="text-xs mt-1">Нажмите «+ Добавить» чтобы добавить шаблоны</p>
+                </div>
+              ) : (
+                <DndContext collisionDetection={closestCenter} onDragEnd={rdHandleDragEnd}>
+                  <SortableContext items={rundown.map((s) => s.slotId)} strategy={verticalListSortingStrategy}>
+                    {rundown.map((slot, i) => {
+                      const onAir = rdOnAirSet.has(slot.slotId);
+                      const slotStatus = onAir ? 'on-air' : i === rdFocusIdx ? 'next' : 'pending';
+                      return (
+                        <SortableRundownRow
+                          key={slot.slotId}
+                          slot={slot} index={i}
+                          status={slotStatus}
+                          focused={i === rdFocusIdx}
+                          full={fullCache[slot.templateId] ?? null}
+                          expanded={expandedSlots.has(slot.slotId)}
+                          onTake={() => { rdTakeAt(i); setRdFocusIdx(Math.min(i + 1, rundown.length - 1)); }}
+                          onClear={() => rdClearSlot(slot.slotId)}
+                          onRemove={() => rdRemoveSlot(slot.slotId)}
+                          onToggleExpand={() => toggleSlotExpand(slot.slotId)}
+                          onVarChange={(varId, value) => updateSlotVar(slot.slotId, varId, value)}
+                          onNeedFull={() => rdFetchTemplate(slot.templateId)}
+                          onFocus={() => setRdFocusIdx(i)}
+                        />
+                      );
+                    })}
+                  </SortableContext>
+                </DndContext>
+              )}
+
+              {/* Add button */}
+              <div className="relative pt-2">
+                <button
+                  onClick={() => setShowAddMenu((v) => !v)}
+                  className="flex items-center gap-2 w-full px-4 py-2.5 rounded-lg border border-dashed border-surface-600 text-gray-500 hover:border-accent-500 hover:text-accent-400 text-sm transition-colors"
+                >
+                  <Plus size={14} /> Добавить шаблон
+                </button>
+
+                {showAddMenu && (
+                  <div className="absolute left-0 right-0 mt-1 bg-surface-800 border border-surface-600 rounded-xl shadow-xl z-10 max-h-64 overflow-y-auto">
+                    {templates.length === 0 ? (
+                      <p className="px-4 py-3 text-xs text-gray-500">Нет шаблонов</p>
+                    ) : (
+                      templates.map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => {
+                            setRundown((prev) => [...prev, { slotId: crypto.randomUUID(), templateId: t.id, name: t.name, vars: {} }]);
+                            setShowAddMenu(false);
+                          }}
+                          className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-surface-700 hover:text-white transition-colors"
+                        >
+                          {t.name}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      </div>{/* end main tab content */}
+
+      {/* ── Preview panel ────────────────────────────────────────────── */}
+      <div className="w-72 xl:w-96 border-l border-surface-700 bg-surface-950 flex flex-col flex-shrink-0">
+        {/* Header */}
+        <div className="px-4 py-3 border-b border-surface-700 flex items-center gap-2 flex-shrink-0">
+          <Monitor size={13} className="text-accent-400" />
+          <span className="text-xs font-semibold text-white uppercase tracking-wider">Preview</span>
+          {previewName && (
+            <span className="text-xs text-gray-500 truncate ml-1">— {previewName}</span>
+          )}
+        </div>
+
+        {/* 16:9 iframe */}
+        <div className="p-3 flex-shrink-0">
+          <div
+            className="relative w-full rounded overflow-hidden border border-surface-700 bg-[#0a0a0f]"
+            style={{ paddingBottom: '56.25%' }}
+          >
+            <iframe
+              ref={previewRef}
+              src="/renderer.html?preview=1"
+              className="absolute inset-0 w-full h-full border-0"
+              onLoad={() => {
+                iframeReadyRef.current = true;
+                if (pendingPreviewRef.current) {
+                  doTakePreview(pendingPreviewRef.current.template, pendingPreviewRef.current.vars);
+                  pendingPreviewRef.current = null;
+                }
+              }}
+            />
+            {!previewId && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-700 pointer-events-none">
+                <Monitor size={24} className="mb-2 opacity-30" />
+                <p className="text-xs text-center px-4 leading-relaxed">
+                  Кликните на шаблон<br />для предпросмотра
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex-1" />
+      </div>
+
+      </div>{/* end body flex row */}
+    </div>
+  );
+}

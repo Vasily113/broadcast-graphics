@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: transparent; overflow: hidden; }
+    #root { position: fixed; inset: 0; overflow: hidden; }
+    #hud {
+      position: fixed; top: 8px; right: 8px; z-index: 9999;
+      display: flex; gap: 6px; align-items: center; pointer-events: none;
+      font-family: monospace; font-size: 11px;
+    }
+    .badge { padding: 2px 8px; border-radius: 4px; color: #fff; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <div id="hud">
+    <span id="ws-badge" class="badge" style="background:#dc2626">✕ WS</span>
+    <span id="air-badge" class="badge" style="background:#dc2626;display:none"></span>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.4.2/dist/pixi.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.2/dist/gsap.min.js"></script>
+  <script>
+  const root = document.getElementById('root');
+  const wsBadge = document.getElementById('ws-badge');
+  const airBadge = document.getElementById('air-badge');
+
+  // ── Font loading ──────────────────────────────────────────────────────────
+  const SYSTEM_FONTS = new Set(['Arial','Helvetica','Verdana','Trebuchet MS','Georgia','Times New Roman','Courier New','sans-serif','serif','monospace']);
+  const loadedFonts = new Set();
+
+  function ensureFonts(template) {
+    const families = [...new Set(
+      (template.layers || []).filter(l => l.type === 'text').map(l => l.style && l.style.fontFamily).filter(Boolean)
+    )].filter(f => !SYSTEM_FONTS.has(f) && !loadedFonts.has(f));
+    if (!families.length) return Promise.resolve(false);
+    families.forEach(family => {
+      loadedFonts.add(family);
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:wght@400;700&display=swap`;
+      document.head.appendChild(link);
+    });
+    return Promise.all(families.map(f => document.fonts.load(`bold 16px "${f}"`).catch(() => {}))).then(() => true);
+  }
+
+  // templateId -> { app, canvas, template, clockTimer, videoMap }
+  const active = new Map();
+
+  // ── Clock formatting ──────────────────────────────────────────────────────
+
+  function formatClockValue(layer) {
+    const now = Math.floor(Date.now() / 1000);
+    let total;
+    if (layer.mode === 'clock') {
+      const d = new Date();
+      total = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
+    } else if (layer.mode === 'countup') {
+      total = Math.max(0, now - (layer.startTime ?? now));
+    } else {
+      total = Math.max(0, (layer.targetTime ?? now) - now);
+    }
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return (layer.format || 'HH:mm:ss')
+      .replace('HH', String(h).padStart(2, '0'))
+      .replace('mm', String(m).padStart(2, '0'))
+      .replace('ss', String(s).padStart(2, '0'));
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  function resolveValue(value, vars, fallback) {
+    if (!value && value !== 0) return fallback;
+    if (typeof value === 'string') return value;
+    if (value && value.type === 'variable') return vars[value.variableId] ?? fallback;
+    return fallback;
+  }
+
+  function hexColor(str) {
+    if (!str || str === 'transparent') return 0x000000;
+    return parseInt(str.replace('#', ''), 16);
+  }
+
+  // ── Video fit ─────────────────────────────────────────────────────────────
+
+  function applyVideoFit(sprite, layer, entry) {
+    const t = layer.transform;
+    const fit = layer.fit || 'stretch';
+    const vid = (entry.videoMap || new Map()).get(layer.id)?.el;
+    const nw = vid ? vid.videoWidth : 0;
+    const nh = vid ? vid.videoHeight : 0;
+    const loaded = nw > 0 && nh > 0;
+
+    if (!loaded || fit === 'stretch') {
+      sprite.x = t.x; sprite.y = t.y;
+      sprite.width = t.width; sprite.height = t.height;
+      return;
+    }
+
+    const scale = fit === 'contain'
+      ? Math.min(t.width / nw, t.height / nh)
+      : Math.max(t.width / nw, t.height / nh);
+    const sw = nw * scale, sh = nh * scale;
+    sprite.x = t.x + (t.width - sw) / 2;
+    sprite.y = t.y + (t.height - sh) / 2;
+    sprite.width = sw; sprite.height = sh;
+  }
+
+  // ── Image fit ────────────────────────────────────────────────────────────
+
+  function applyImageFit(sprite, layer, t) {
+    const fit = layer.fit || 'stretch';
+    const tex = sprite.texture;
+    const loaded = tex && tex !== PIXI.Texture.EMPTY && tex.valid && tex.orig && tex.orig.width > 0;
+
+    if (!loaded || fit === 'stretch') {
+      sprite.x = t.x; sprite.y = t.y;
+      sprite.width = t.width; sprite.height = t.height;
+      return;
+    }
+
+    const nw = tex.orig.width, nh = tex.orig.height;
+    const scale = fit === 'contain'
+      ? Math.min(t.width / nw, t.height / nh)
+      : Math.max(t.width / nw, t.height / nh);
+    const sw = nw * scale, sh = nh * scale;
+    sprite.x = t.x + (t.width - sw) / 2;
+    sprite.y = t.y + (t.height - sh) / 2;
+    sprite.width = sw; sprite.height = sh;
+  }
+
+  // ── Layer rendering ───────────────────────────────────────────────────────
+
+  function createObj(layer) {
+    switch (layer.type) {
+      case 'text':
+      case 'clock':  return new PIXI.Text('');
+      case 'image':
+      case 'video':  return new PIXI.Sprite();
+      case 'rect':   return new PIXI.Graphics();
+      default:       return new PIXI.Container();
+    }
+  }
+
+  function applyLayer(obj, layer, vars, entry) {
+    const t = layer.transform;
+    obj.x = t.x;
+    obj.y = t.y;
+    obj.rotation = (t.rotation * Math.PI) / 180;
+    obj.alpha = layer.visible ? layer.opacity : 0;
+
+    const bmKey = (layer.blendMode || 'normal').toUpperCase();
+    obj.blendMode = PIXI.BLEND_MODES[bmKey] ?? PIXI.BLEND_MODES.NORMAL;
+
+    if (layer.type === 'text' || layer.type === 'clock') {
+      const fill = resolveValue(layer.style.fill, vars, '#ffffff');
+      obj.text = layer.type === 'clock'
+        ? formatClockValue(layer)
+        : resolveValue(layer.content, vars, '');
+      obj.style = new PIXI.TextStyle({
+        fontFamily:        layer.style.fontFamily || 'Arial',
+        fontSize:          layer.style.fontSize   || 48,
+        fontWeight:        layer.style.fontWeight || 'bold',
+        fill,
+        align:             layer.style.align,
+        lineHeight:        layer.style.lineHeight,
+        letterSpacing:     layer.style.letterSpacing,
+        stroke:            layer.style.strokeColor,
+        strokeThickness:   layer.style.strokeWidth,
+        dropShadow:        layer.style.dropShadow,
+        dropShadowBlur:    layer.style.dropShadowBlur,
+        dropShadowColor:   layer.style.dropShadowColor,
+        dropShadowDistance:layer.style.dropShadowDistance,
+        wordWrap:          true,
+        wordWrapWidth:     t.width,
+      });
+    }
+
+    if (layer.type === 'rect') {
+      const fill = resolveValue(layer.fill, vars, '#3a3a3a');
+      obj.clear();
+      if (layer.borderWidth > 0)
+        obj.lineStyle(layer.borderWidth, hexColor(layer.borderColor), 1);
+      obj.beginFill(hexColor(fill));
+      if (layer.cornerRadius > 0)
+        obj.drawRoundedRect(0, 0, t.width, t.height, layer.cornerRadius);
+      else
+        obj.drawRect(0, 0, t.width, t.height);
+      obj.endFill();
+    }
+
+    if (layer.type === 'image') {
+      const src = resolveValue(layer.src, vars, '');
+      const cached = obj.texture && obj.texture.textureCacheIds && obj.texture.textureCacheIds[0];
+      if (src && cached !== src) {
+        PIXI.Texture.fromURL(src).then(tex => {
+          obj.texture = tex;
+          applyImageFit(obj, layer, t);
+        }).catch(err => console.warn('Image load failed:', src, err));
+      }
+      applyImageFit(obj, layer, t);
+    }
+
+    if (layer.type === 'video' && entry) {
+      const src = layer.src || '';
+      if (src) {
+        const existing = entry.videoMap.get(layer.id);
+        if (!existing || existing.src !== src) {
+          if (existing) { existing.el.pause(); existing.el.src = ''; }
+          const el = document.createElement('video');
+          el.src = src;
+          el.loop = layer.loop !== false;
+          el.muted = true;
+          el.autoplay = true;
+          el.playsInline = true;
+          el.crossOrigin = 'anonymous';
+          el.play().catch(() => {});
+          entry.videoMap.set(layer.id, { el, src });
+          obj.texture = PIXI.Texture.from(el);
+        } else {
+          existing.el.loop = layer.loop !== false;
+        }
+      } else {
+        obj.texture = PIXI.Texture.EMPTY;
+      }
+      applyVideoFit(obj, layer, entry);
+    }
+  }
+
+  // ── Template sync ─────────────────────────────────────────────────────────
+
+  function syncTemplate(entry, vars) {
+    ensureFonts(entry.template).then(loaded => { if (loaded) syncTemplate(entry, vars); });
+    const { app, layerMap, template } = entry;
+    const bg = template.canvas.background;
+    if (!bg || bg === 'transparent') {
+      app.renderer.background.alpha = 0;
+    } else {
+      app.renderer.background.color = hexColor(bg);
+      app.renderer.background.alpha = 1;
+    }
+
+    const container = app.stage.children[0];
+    const existingIds = new Set(layerMap.keys());
+    const reversed = [...template.layers].reverse();
+
+    reversed.forEach((layer, index) => {
+      existingIds.delete(layer.id);
+      let obj = layerMap.get(layer.id);
+      if (!obj || obj.name !== layer.type) {
+        if (obj) { container.removeChild(obj); obj.destroy(); }
+        obj = createObj(layer);
+        obj.name = layer.type;
+        layerMap.set(layer.id, obj);
+        container.addChildAt(obj, index);
+      }
+      applyLayer(obj, layer, vars || {}, entry);
+      container.setChildIndex(obj, index);
+    });
+
+    existingIds.forEach(id => {
+      const obj = layerMap.get(id);
+      if (obj) { container.removeChild(obj); obj.destroy(); }
+      layerMap.delete(id);
+      const vid = entry.videoMap && entry.videoMap.get(id);
+      if (vid) { vid.el.pause(); vid.el.src = ''; entry.videoMap.delete(id); }
+    });
+  }
+
+  // ── Animations ────────────────────────────────────────────────────────────
+
+  function playIn(entry, onComplete) {
+    const { app, layerMap, template } = entry;
+    const tl = gsap.timeline({ onComplete });
+    (template.tracks || []).forEach(track => {
+      const obj = layerMap.get(track.layerId);
+      if (!obj || !track.inKeyframes.length) return;
+      const fromState = { alpha: 0 };
+      track.inKeyframes.forEach(kf => { if (kf.fromProperties) Object.assign(fromState, kf.fromProperties); });
+      gsap.set(obj, fromState);
+      track.inKeyframes.forEach(kf => {
+        tl.to(obj, { duration: kf.time / 1000, ease: kf.easing, ...kf.properties }, 0);
+      });
+    });
+    return tl;
+  }
+
+  function playOut(entry, onComplete) {
+    const { app, layerMap, template } = entry;
+    const tl = gsap.timeline({ onComplete });
+    (template.tracks || []).forEach(track => {
+      const obj = layerMap.get(track.layerId);
+      if (!obj || !track.outKeyframes.length) return;
+      track.outKeyframes.forEach(kf => {
+        tl.to(obj, { duration: kf.time / 1000, ease: kf.easing, ...kf.properties }, 0);
+      });
+    });
+    return tl;
+  }
+
+  // ── Clock ticker ─────────────────────────────────────────────────────────
+
+  function startClockTicker(entry) {
+    if (entry.clockTimer) { clearInterval(entry.clockTimer); entry.clockTimer = null; }
+    const clockLayers = (entry.template.layers || []).filter(l => l.type === 'clock');
+    if (!clockLayers.length) return;
+    entry.clockTimer = setInterval(() => {
+      clockLayers.forEach(layer => {
+        const obj = entry.layerMap.get(layer.id);
+        if (obj) obj.text = formatClockValue(layer);
+      });
+    }, 1000);
+  }
+
+  // ── Commands ──────────────────────────────────────────────────────────────
+
+  function handleCommand(cmd) {
+    if (cmd.type === 'take') {
+      // Destroy existing if re-take
+      const existing = active.get(cmd.templateId);
+      if (existing) {
+        if (existing.clockTimer) { clearInterval(existing.clockTimer); }
+        if (existing.videoMap) { existing.videoMap.forEach(({ el }) => { el.pause(); el.src = ''; }); }
+        existing.app.destroy(true);
+        existing.canvas.remove();
+        active.delete(cmd.templateId);
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;';
+      root.appendChild(canvas);
+
+      let app;
+      try {
+        app = new PIXI.Application({
+          view: canvas,
+          width:  cmd.template.canvas.width,
+          height: cmd.template.canvas.height,
+          backgroundAlpha: 0,
+          resolution: 1,
+          antialias: true,
+        });
+      } catch (e) {
+        try {
+          app = new PIXI.Application({
+            view: canvas,
+            width:  cmd.template.canvas.width,
+            height: cmd.template.canvas.height,
+            backgroundAlpha: 0,
+            resolution: 1,
+            forceCanvas: true,
+          });
+        } catch (e2) {
+          canvas.remove();
+          console.error('PixiJS init failed:', e2);
+          return;
+        }
+      }
+
+      const layerContainer = new PIXI.Container();
+      app.stage.addChild(layerContainer);
+
+      const entry = { app, canvas, template: cmd.template, layerMap: new Map(), clockTimer: null, videoMap: new Map() };
+      active.set(cmd.templateId, entry);
+      updateHud();
+
+      syncTemplate(entry, cmd.variables || {});
+      startClockTicker(entry);
+      playIn(entry);
+    }
+
+    if (cmd.type === 'clear') {
+      const entry = active.get(cmd.templateId);
+      if (!entry) return;
+      if (entry.clockTimer) { clearInterval(entry.clockTimer); entry.clockTimer = null; }
+      // Pause videos now, but don't clear src yet — avoids triggering PIXI texture errors
+      if (entry.videoMap) entry.videoMap.forEach(({ el }) => { try { el.pause(); } catch(e) {} });
+      active.delete(cmd.templateId);
+      updateHud();
+      playOut(entry, () => {
+        // Clean up video elements after PIXI has finished rendering
+        if (entry.videoMap) {
+          entry.videoMap.forEach(({ el }) => {
+            try { el.removeAttribute('src'); el.load(); } catch(e) {}
+          });
+          entry.videoMap.clear();
+        }
+        try { entry.app.destroy(true); } catch(e) { console.warn('PIXI destroy:', e); }
+        entry.canvas.remove();
+      });
+    }
+
+    if (cmd.type === 'update') {
+      const entry = active.get(cmd.templateId);
+      if (!entry) return;
+      syncTemplate(entry, cmd.variables || {});
+    }
+  }
+
+  // ── HUD ───────────────────────────────────────────────────────────────────
+
+  function updateHud() {
+    const n = active.size;
+    airBadge.style.display = n > 0 ? '' : 'none';
+    airBadge.textContent = n + ' ON AIR';
+  }
+
+  // ── WebSocket ─────────────────────────────────────────────────────────────
+
+  function connect() {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = new URLSearchParams(location.search).get('host') || location.host;
+    const url = `${protocol}//${host}/ws/renderer`;
+    wsBadge.title = url;
+    const ws = new WebSocket(url);
+
+    ws.onopen = () => {
+      wsBadge.style.background = '#16a34a';
+      wsBadge.textContent = '⬤ WS';
+    };
+    ws.onclose = () => {
+      wsBadge.style.background = '#dc2626';
+      wsBadge.textContent = '✕ WS';
+      setTimeout(connect, 3000);
+    };
+    ws.onerror = () => ws.close();
+    ws.onmessage = (e) => {
+      try { handleCommand(JSON.parse(e.data)); } catch(err) { console.error(err); }
+    };
+  }
+
+  const IS_PREVIEW = new URLSearchParams(location.search).has('preview');
+  if (IS_PREVIEW) {
+    document.getElementById('hud').style.display = 'none';
+    document.body.style.background = '#0a0a0f';
+  } else {
+    connect();
+  }
+
+  // PostMessage for preview mode (or external control without WS)
+  window.addEventListener('message', (e) => {
+    if (e.data && typeof e.data === 'object' && e.data.type) {
+      try { handleCommand(e.data); } catch (err) { console.error(err); }
+    }
+  });
+  </script>
+</body>
+</html>

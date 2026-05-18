@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /d \"D:\\\\broadcast-graphics\\\\frontend\")",
+      "Bash(npm install *)",
+      "mcp__Claude_in_Chrome__read_console_messages",
+      "mcp__Claude_in_Chrome__navigate",
+      "mcp__Claude_in_Chrome__javascript_tool",
+      "mcp__Claude_in_Chrome__computer",
+      "Bash(npx tsc *)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(Get-ChildItem -Path \"D:\\\\broadcast-graphics\" -Recurse -Force)",
+      "Bash(Select-Object -Property FullName)",
+      "Bash(Sort-Object FullName)",
+      "PowerShell(tree /F /A \"D:\\\\broadcast-graphics\" 2>$null | Where-Object { $_ -notmatch 'node_modules' } | Select-Object -First 200)",
+      "Bash(find D:\\\\\\\\broadcast-graphics -type f \\\\\\( -name \"*.js\" -o -name \"*.jsx\" -o -name \"*.ts\" -o -name \"*.tsx\" -o -name \"*.json\" \\\\\\) ! -path \"*/node_modules/*\")",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(/d/broadcast-graphics/frontend/node_modules/.bin/tsc --noEmit --project /d/broadcast-graphics/frontend/tsconfig.json)",
+      "Bash(ls /mnt/)",
+      "Read(//d//**)",
+      "Bash(/d/broadcast-graphics/frontend/node_modules/.bin/tsc -p /d/broadcast-graphics/frontend/tsconfig.json --noEmit)",
+      "Bash(del \"D:\\\\broadcast-graphics\\\\frontend\\\\src\\\\core\\\\keyframes.ts\")",
+      "Bash(del \"D:\\\\broadcast-graphics\\\\frontend\\\\src\\\\features\\\\editor\\\\TimelinePanel.tsx\")"
+    ]
+  }
+}
