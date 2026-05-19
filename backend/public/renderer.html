@@ -303,6 +303,182 @@
     return tl;
   }
 
+  // ── DOM Renderer (fallback when WebGL/Canvas unavailable) ────────────────
+
+  // Map PIXI-style animation props to DOM/GSAP equivalents
+  function mapGsapProps(props) {
+    const out = {};
+    for (const [k, v] of Object.entries(props)) {
+      if (k === 'alpha') out.opacity = v;
+      else out[k] = v;
+    }
+    return out;
+  }
+
+  function domApplyLayer(el, layer, vars) {
+    const t = layer.transform;
+    el.style.position     = 'absolute';
+    el.style.left         = t.x + 'px';
+    el.style.top          = t.y + 'px';
+    el.style.width        = t.width + 'px';
+    el.style.height       = t.height + 'px';
+    el.style.opacity      = layer.visible ? (layer.opacity != null ? layer.opacity : 1) : 0;
+    el.style.transform    = `rotate(${t.rotation || 0}deg)`;
+    el.style.transformOrigin = '0 0';
+    el.style.overflow     = 'hidden';
+    el.style.boxSizing    = 'border-box';
+
+    if (layer.type === 'text' || layer.type === 'clock') {
+      const fill = resolveValue(layer.style.fill, vars, '#ffffff');
+      const text = layer.type === 'clock'
+        ? formatClockValue(layer)
+        : resolveValue(layer.content, vars, '');
+      el.textContent = text;
+      const s = layer.style || {};
+      el.style.color         = fill;
+      el.style.fontFamily    = s.fontFamily || 'Arial';
+      el.style.fontSize      = (s.fontSize || 48) + 'px';
+      el.style.fontWeight    = s.fontWeight || 'bold';
+      el.style.lineHeight    = s.lineHeight ? s.lineHeight + 'px' : 'normal';
+      el.style.letterSpacing = s.letterSpacing ? s.letterSpacing + 'px' : 'normal';
+      el.style.textAlign     = s.align || 'left';
+      el.style.whiteSpace    = 'pre-wrap';
+      el.style.wordBreak     = 'break-word';
+      if (s.dropShadow) {
+        const dist = s.dropShadowDistance || 2;
+        el.style.textShadow = `${dist}px ${dist}px ${s.dropShadowBlur || 4}px ${s.dropShadowColor || 'rgba(0,0,0,0.8)'}`;
+      } else {
+        el.style.textShadow = '';
+      }
+      if (s.strokeWidth > 0) {
+        el.style.webkitTextStroke = `${s.strokeWidth}px ${s.strokeColor || '#000'}`;
+      } else {
+        el.style.webkitTextStroke = '';
+      }
+    }
+
+    if (layer.type === 'rect') {
+      const fill = resolveValue(layer.fill, vars, '#3a3a3a');
+      el.style.background   = fill === 'transparent' ? 'transparent' : fill;
+      el.style.borderRadius = (layer.cornerRadius || 0) + 'px';
+      if (layer.borderWidth > 0) {
+        el.style.border = `${layer.borderWidth}px solid ${layer.borderColor || '#000000'}`;
+      } else {
+        el.style.border = 'none';
+      }
+    }
+
+    if (layer.type === 'image') {
+      const src = resolveValue(layer.src, vars, '');
+      let img = el.querySelector('img');
+      if (!img) {
+        img = document.createElement('img');
+        img.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block;';
+        el.appendChild(img);
+      }
+      if (src && img.getAttribute('data-src') !== src) {
+        img.setAttribute('data-src', src);
+        img.src = src;
+      }
+      const fit = layer.fit || 'stretch';
+      img.style.objectFit = fit === 'stretch' ? 'fill' : fit;
+    }
+
+    if (layer.type === 'video') {
+      const src = layer.src || '';
+      let vid = el.querySelector('video');
+      if (!vid) {
+        vid = document.createElement('video');
+        vid.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block;';
+        vid.muted = true; vid.autoplay = true; vid.playsInline = true;
+        el.appendChild(vid);
+      }
+      const fit = layer.fit || 'stretch';
+      vid.style.objectFit = fit === 'stretch' ? 'fill' : fit;
+      if (src && vid.getAttribute('data-src') !== src) {
+        vid.setAttribute('data-src', src);
+        vid.src = src;
+        vid.loop = layer.loop !== false;
+        vid.play().catch(() => {});
+      } else if (vid.getAttribute('data-src')) {
+        vid.loop = layer.loop !== false;
+      }
+    }
+  }
+
+  function domSyncTemplate(entry, vars) {
+    ensureFonts(entry.template).then(loaded => { if (loaded) domSyncTemplate(entry, vars); });
+    const { domRoot, template, layerEls } = entry;
+    const bg = template.canvas.background;
+    domRoot.style.background = (!bg || bg === 'transparent') ? 'transparent' : bg;
+
+    const existingIds = new Set(layerEls.keys());
+
+    template.layers.forEach((layer, index) => {
+      existingIds.delete(layer.id);
+      let item = layerEls.get(layer.id);
+      if (!item || item.type !== layer.type) {
+        if (item) item.el.remove();
+        const el = document.createElement('div');
+        domRoot.appendChild(el);
+        item = { el, type: layer.type };
+        layerEls.set(layer.id, item);
+      }
+      item.el.style.zIndex = index;
+      domApplyLayer(item.el, layer, vars || {});
+    });
+
+    existingIds.forEach(id => {
+      const item = layerEls.get(id);
+      if (item) item.el.remove();
+      layerEls.delete(id);
+    });
+  }
+
+  function domStartClockTicker(entry) {
+    if (entry.clockTimer) { clearInterval(entry.clockTimer); entry.clockTimer = null; }
+    const clockLayers = (entry.template.layers || []).filter(l => l.type === 'clock');
+    if (!clockLayers.length) return;
+    entry.clockTimer = setInterval(() => {
+      clockLayers.forEach(layer => {
+        const item = entry.layerEls.get(layer.id);
+        if (item) item.el.textContent = formatClockValue(layer);
+      });
+    }, 1000);
+  }
+
+  function domPlayIn(entry, onComplete) {
+    const { layerEls, template } = entry;
+    const tl = gsap.timeline({ onComplete });
+    (template.tracks || []).forEach(track => {
+      const item = layerEls.get(track.layerId);
+      if (!item || !track.inKeyframes.length) return;
+      const fromState = { opacity: 0 };
+      track.inKeyframes.forEach(kf => {
+        if (kf.fromProperties) Object.assign(fromState, mapGsapProps(kf.fromProperties));
+      });
+      gsap.set(item.el, fromState);
+      track.inKeyframes.forEach(kf => {
+        tl.to(item.el, { duration: kf.time / 1000, ease: kf.easing, ...mapGsapProps(kf.properties || {}) }, 0);
+      });
+    });
+    return tl;
+  }
+
+  function domPlayOut(entry, onComplete) {
+    const { layerEls, template } = entry;
+    const tl = gsap.timeline({ onComplete });
+    (template.tracks || []).forEach(track => {
+      const item = layerEls.get(track.layerId);
+      if (!item || !track.outKeyframes.length) return;
+      track.outKeyframes.forEach(kf => {
+        tl.to(item.el, { duration: kf.time / 1000, ease: kf.easing, ...mapGsapProps(kf.properties || {}) }, 0);
+      });
+    });
+    if (tl.totalDuration() === 0 && onComplete) onComplete();
+    return tl;
+  }
+
   // ── Clock ticker ─────────────────────────────────────────────────────────
 
   function startClockTicker(entry) {
@@ -320,14 +496,19 @@
   // ── Commands ──────────────────────────────────────────────────────────────
 
   function handleCommand(cmd) {
+    window._dbg(`CMD: ${cmd.type} id=${cmd.templateId}`);
     if (cmd.type === 'take') {
       // Destroy existing if re-take
       const existing = active.get(cmd.templateId);
       if (existing) {
         if (existing.clockTimer) { clearInterval(existing.clockTimer); }
-        if (existing.videoMap) { existing.videoMap.forEach(({ el }) => { el.pause(); el.src = ''; }); }
-        existing.app.destroy(true);
-        existing.canvas.remove();
+        if (existing.isDom) {
+          existing.domRoot.remove();
+        } else {
+          if (existing.videoMap) { existing.videoMap.forEach(({ el }) => { el.pause(); el.src = ''; }); }
+          try { existing.app.destroy(true); } catch(e) {}
+          existing.canvas.remove();
+        }
         active.delete(cmd.templateId);
       }
 
@@ -336,6 +517,7 @@
       root.appendChild(canvas);
 
       let app;
+      let useDom = false;
       try {
         app = new PIXI.Application({
           view: canvas,
@@ -345,7 +527,9 @@
           resolution: 1,
           antialias: true,
         });
+        window._dbg('PIXI init: WebGL OK');
       } catch (e) {
+        window._dbg('PIXI WebGL failed, trying Canvas: ' + e.message);
         try {
           app = new PIXI.Application({
             view: canvas,
@@ -355,11 +539,27 @@
             resolution: 1,
             forceCanvas: true,
           });
+          window._dbg('PIXI init: Canvas OK');
         } catch (e2) {
           canvas.remove();
-          console.error('PixiJS init failed:', e2);
-          return;
+          window._dbg('PIXI FAILED, using DOM renderer: ' + e2.message);
+          console.warn('PixiJS init failed, falling back to DOM renderer:', e2);
+          useDom = true;
         }
+      }
+
+      if (useDom) {
+        const domRoot = document.createElement('div');
+        domRoot.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;overflow:hidden;';
+        root.appendChild(domRoot);
+        const entry = { isDom: true, domRoot, template: cmd.template, layerEls: new Map(), clockTimer: null };
+        active.set(cmd.templateId, entry);
+        updateHud();
+        domSyncTemplate(entry, cmd.variables || {});
+        domStartClockTicker(entry);
+        domPlayIn(entry);
+        window._dbg(`TAKE done (DOM): ${cmd.template.name}, layers=${cmd.template.layers.length}`);
+        return;
       }
 
       const layerContainer = new PIXI.Container();
@@ -372,18 +572,24 @@
       syncTemplate(entry, cmd.variables || {});
       startClockTicker(entry);
       playIn(entry);
+      window._dbg(`TAKE done: ${cmd.template.name}, layers=${cmd.template.layers.length}`);
     }
 
     if (cmd.type === 'clear') {
       const entry = active.get(cmd.templateId);
       if (!entry) return;
       if (entry.clockTimer) { clearInterval(entry.clockTimer); entry.clockTimer = null; }
-      // Pause videos now, but don't clear src yet — avoids triggering PIXI texture errors
-      if (entry.videoMap) entry.videoMap.forEach(({ el }) => { try { el.pause(); } catch(e) {} });
       active.delete(cmd.templateId);
       updateHud();
+
+      if (entry.isDom) {
+        domPlayOut(entry, () => { entry.domRoot.remove(); });
+        return;
+      }
+
+      // PIXI path — pause videos now, clean up after out-anim
+      if (entry.videoMap) entry.videoMap.forEach(({ el }) => { try { el.pause(); } catch(e) {} });
       playOut(entry, () => {
-        // Clean up video elements after PIXI has finished rendering
         if (entry.videoMap) {
           entry.videoMap.forEach(({ el }) => {
             try { el.removeAttribute('src'); el.load(); } catch(e) {}
@@ -398,6 +604,10 @@
     if (cmd.type === 'update') {
       const entry = active.get(cmd.templateId);
       if (!entry) return;
+      if (entry.isDom) {
+        domSyncTemplate(entry, cmd.variables || {});
+        return;
+      }
       syncTemplate(entry, cmd.variables || {});
     }
   }
@@ -408,6 +618,27 @@
     const n = active.size;
     airBadge.style.display = n > 0 ? '' : 'none';
     airBadge.textContent = n + ' ON AIR';
+  }
+
+  // ── Debug overlay (add ?debug to URL to enable) ───────────────────────────
+
+  const IS_DEBUG = new URLSearchParams(location.search).has('debug');
+  let debugEl = null;
+  if (IS_DEBUG) {
+    debugEl = document.createElement('div');
+    debugEl.style.cssText = 'position:fixed;bottom:8px;left:8px;right:8px;z-index:9999;font-family:monospace;font-size:11px;color:#0f0;text-shadow:0 0 4px #000;pointer-events:none;';
+    document.body.appendChild(debugEl);
+    const lines = [];
+    window._dbg = (msg) => {
+      const t = new Date().toISOString().slice(11,23);
+      lines.unshift(`[${t}] ${msg}`);
+      if (lines.length > 12) lines.pop();
+      debugEl.innerHTML = lines.map(l => `<div>${l}</div>`).join('');
+    };
+    window.onerror = (msg, src, line) => window._dbg(`ERROR: ${msg} (${line})`);
+    window._dbg('Debug mode ON — waiting for commands...');
+  } else {
+    window._dbg = () => {};
   }
 
   // ── WebSocket ─────────────────────────────────────────────────────────────
@@ -422,10 +653,12 @@
     ws.onopen = () => {
       wsBadge.style.background = '#16a34a';
       wsBadge.textContent = '⬤ WS';
+      window._dbg('WS connected: ' + url);
     };
     ws.onclose = () => {
       wsBadge.style.background = '#dc2626';
       wsBadge.textContent = '✕ WS';
+      window._dbg('WS disconnected, retry in 3s');
       setTimeout(connect, 3000);
     };
     ws.onerror = () => ws.close();
