@@ -59,8 +59,10 @@ struct State {
 
     std::atomic<bool>    running{false};
 
-    // Shared staging buffer: latest BGRA paint from Electron
-    std::vector<uint8_t> stagingBGRA;
+    // Shared staging buffer: latest frame pre-converted to ARGB (DeckLink format).
+    // Conversion BGRA→ARGB is done once in scheduleFrame() on the JS thread;
+    // each ScheduledFrameCompleted callback just memcpy's from here.
+    std::vector<uint8_t> stagingARGB;
     std::mutex           stagingMtx;
 
     std::mutex           mtx;    // guards open / close
@@ -110,21 +112,10 @@ public:
             void* pixels = nullptr;
             if (SUCCEEDED(buf->GetBytes(&pixels)) && pixels) {
                 std::lock_guard<std::mutex> lk(g_state.stagingMtx);
-                if (g_state.stagingBGRA.size() == 1920u * 1080u * 4u) {
-                    // BGRA (Electron) → ARGB (DeckLink bmdFormat8BitARGB)
-                    const uint8_t* bgra = g_state.stagingBGRA.data();
-                    uint8_t*       argb = static_cast<uint8_t*>(pixels);
-                    const size_t   n    = 1920u * 1080u;
-                    for (size_t i = 0; i < n; ++i) {
-                        argb[0] = bgra[3]; // A
-                        argb[1] = bgra[2]; // R
-                        argb[2] = bgra[1]; // G
-                        argb[3] = bgra[0]; // B
-                        bgra += 4; argb += 4;
-                    }
-                }
-                // Note: stagingFresh is not used — both devices always consume
-                // the latest available frame from the shared staging buffer.
+                // Conversion BGRA→ARGB is done once in scheduleFrame() on the
+                // JS thread — here we just memcpy the pre-converted ARGB data.
+                if (g_state.stagingARGB.size() == 1920u * 1080u * 4u)
+                    std::memcpy(pixels, g_state.stagingARGB.data(), 1920u * 1080u * 4u);
             }
             buf->EndAccess(bmdBufferAccessWrite);
             buf->Release();
@@ -451,7 +442,7 @@ static Napi::Value Close(const Napi::CallbackInfo& info) {
 
     {
         std::lock_guard<std::mutex> sl(g_state.stagingMtx);
-        g_state.stagingBGRA.clear();
+        g_state.stagingARGB.clear();
     }
 
     fprintf(stderr, "[DeckLink] All devices closed\n");
@@ -460,8 +451,9 @@ static Napi::Value Close(const Napi::CallbackInfo& info) {
 
 // ---------------------------------------------------------------------------
 // JS: scheduleFrame(Buffer)
-//   Called from Electron's offscreen paint event at 25 fps.
-//   Copies the raw BGRA bitmap into the shared staging buffer.
+//   Called from Electron's offscreen paint event at 25 fps (JS thread).
+//   Converts BGRA (Electron) → ARGB (DeckLink bmdFormat8BitARGB) once here,
+//   so each ScheduledFrameCompleted callback only needs a plain memcpy.
 // ---------------------------------------------------------------------------
 static Napi::Value ScheduleFrame(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -472,14 +464,27 @@ static Napi::Value ScheduleFrame(const Napi::CallbackInfo& info) {
     }
     if (!g_state.running.load(std::memory_order_acquire)) return env.Undefined();
 
-    auto         buf  = info[0].As<Napi::Buffer<uint8_t>>();
-    const size_t len  = buf.ByteLength();
+    auto           buf  = info[0].As<Napi::Buffer<uint8_t>>();
+    const size_t   len  = buf.ByteLength();
     if (len != 1920u * 1080u * 4u) return env.Undefined();
 
+    const uint8_t* bgra = buf.Data();
+
     std::lock_guard<std::mutex> lk(g_state.stagingMtx);
-    if (g_state.stagingBGRA.size() != len)
-        g_state.stagingBGRA.resize(len);
-    std::memcpy(g_state.stagingBGRA.data(), buf.Data(), len);
+    if (g_state.stagingARGB.size() != len)
+        g_state.stagingARGB.resize(len);
+
+    // BGRA (Electron getBitmap) → ARGB (DeckLink bmdFormat8BitARGB)
+    // Done once per frame here instead of once per device in the driver callback.
+    uint8_t*     argb = g_state.stagingARGB.data();
+    const size_t n    = 1920u * 1080u;
+    for (size_t i = 0; i < n; ++i) {
+        argb[0] = bgra[3]; // A
+        argb[1] = bgra[2]; // R
+        argb[2] = bgra[1]; // G
+        argb[3] = bgra[0]; // B
+        bgra += 4; argb += 4;
+    }
 
     return env.Undefined();
 }
