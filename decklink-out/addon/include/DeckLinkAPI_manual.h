@@ -292,6 +292,71 @@ IDeckLinkKeyer : public IUnknown
 };
 
 // ---------------------------------------------------------------------------
+// Profile IDs  (BMDProfileID)
+// ---------------------------------------------------------------------------
+typedef uint32_t BMDProfileID;
+static const BMDProfileID bmdProfileOneSubDeviceFullDuplex   = 0x31646664u; // '1dfd'
+static const BMDProfileID bmdProfileOneSubDeviceHalfDuplex   = 0x31646864u; // '1dhd'
+static const BMDProfileID bmdProfileTwoSubDevicesFullDuplex  = 0x32646664u; // '2dfd'
+static const BMDProfileID bmdProfileTwoSubDevicesHalfDuplex  = 0x32646864u; // '2dhd'
+static const BMDProfileID bmdProfileFourSubDevicesHalfDuplex = 0x34646864u; // '4dhd'
+
+// ---------------------------------------------------------------------------
+// Attribute IDs used by IDeckLinkProfileAttributes
+// ---------------------------------------------------------------------------
+typedef uint32_t BMDDeckLinkAttributeID;
+static const BMDDeckLinkAttributeID BMDDeckLinkSupportsExternalKeying = 0x6B657965u; // 'keye'
+static const BMDDeckLinkAttributeID BMDDeckLinkHasMonitorOut          = 0x666D6F6Fu; // 'fmoo'
+static const BMDDeckLinkAttributeID BMDDeckLinkNumberOfSubDevices     = 0x6E736264u; // 'nsbd'
+static const BMDDeckLinkAttributeID BMDDeckLinkSubDeviceIndex         = 0x73756269u; // 'subi'
+static const BMDDeckLinkAttributeID BMDDeckLinkProfileID_Attr         = 0x70726964u; // 'prid'
+
+// Opaque profile types (only used as pointers)
+struct IDeckLinkProfileIterator;
+struct IDeckLinkProfileCallback;
+
+// ---------------------------------------------------------------------------
+// IDeckLinkProfileAttributes  (QI from IDeckLink)
+// GUID: F47551D7-AD22-47AF-BCFD-6BE88AA879D9
+// ---------------------------------------------------------------------------
+DL_IFACE("F47551D7-AD22-47AF-BCFD-6BE88AA879D9")
+IDeckLinkProfileAttributes : public IUnknown
+{
+    virtual HRESULT STDMETHODCALLTYPE GetFlag(BMDDeckLinkAttributeID cfgID, BOOL* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetInt(BMDDeckLinkAttributeID cfgID, LONGLONG* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetFloat(BMDDeckLinkAttributeID cfgID, double* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetString(BMDDeckLinkAttributeID cfgID, BSTR* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetStringWithParam(BMDDeckLinkAttributeID cfgID,
+                                                          ULONGLONG param, BSTR* value) = 0;
+};
+
+// ---------------------------------------------------------------------------
+// IDeckLinkProfile  (obtained via IDeckLinkProfileManager)
+// GUID: 16093466-674A-432B-9DA0-1AC2C5A8241C
+// ---------------------------------------------------------------------------
+DL_IFACE("16093466-674A-432B-9DA0-1AC2C5A8241C")
+IDeckLinkProfile : public IUnknown
+{
+    virtual HRESULT STDMETHODCALLTYPE GetDevice(IDeckLink** device) = 0;
+    virtual HRESULT STDMETHODCALLTYPE IsActive(BOOL* isActive) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetActive() = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetPeers(IDeckLinkProfileIterator** profileIterator) = 0;
+};
+
+// ---------------------------------------------------------------------------
+// IDeckLinkProfileManager  (QI from IDeckLink when multiple profiles available)
+// GUID: 30D41429-3998-4B6D-84F8-78C94A797C6E
+// ---------------------------------------------------------------------------
+DL_IFACE("30D41429-3998-4B6D-84F8-78C94A797C6E")
+IDeckLinkProfileManager : public IUnknown
+{
+    virtual HRESULT STDMETHODCALLTYPE GetProfiles(IDeckLinkProfileIterator** profileIterator) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetProfile(BMDProfileID profileID,
+                                                  IDeckLinkProfile** profile) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetCallback(IDeckLinkProfileCallback* callback) = 0;
+};
+
+// ---------------------------------------------------------------------------
 // CLSID for CDeckLinkIterator CoClass
 // GUID: BA6C6F44-6DA5-4DCE-94AA-EE2D1372A676
 // ---------------------------------------------------------------------------
