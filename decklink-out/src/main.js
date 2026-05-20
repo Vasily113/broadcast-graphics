@@ -65,11 +65,10 @@ function createWindow() {
         transparent:     true,          // allow alpha channel through to offscreen bitmap
         backgroundColor: '#00000000',  // fully transparent default background
         webPreferences: {
-            offscreen:              true,
-            backgroundThrottling:   false,
-            contextIsolation:       true,
-            webgl:                  true,
-            experimentalFeatures:   true,
+            offscreen:            true,
+            backgroundThrottling: false,
+            contextIsolation:     true,
+            webgl:                true,
         }
     });
 
