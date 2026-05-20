@@ -52,6 +52,7 @@ typedef enum _BMDOutputFrameCompletionResult {
 // (from DeckLinkAPIModes.idl and DeckLinkAPI.idl)
 // ---------------------------------------------------------------------------
 static const BMDDisplayMode              bmdModeHD1080p50              = 0x48703530u; // 'Hp50'
+static const BMDDisplayMode              bmdModeHD1080i50              = 0x48693530u; // 'Hi50'
 static const BMDPixelFormat              bmdFormat8BitARGB             = 32u;
 static const BMDPixelFormat              bmdFormat8BitBGRA             = 0x42475241u; // 'BGRA'
 static const BMDVideoOutputFlags         bmdVideoOutputFlagDefault     = 0u;

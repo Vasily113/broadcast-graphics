@@ -1,5 +1,5 @@
 // decklink.cpp
-// Electron N-API addon: renders 1080p50 Fill+Key to Blackmagic DeckLink 8K Pro.
+// Electron N-API addon: renders 1080i50 Fill+Key to Blackmagic DeckLink 8K Pro.
 //
 // Architecture (pull model):
 //   - Open(): creates SDK-managed frames via CreateVideoFrame(), pre-schedules
@@ -25,10 +25,10 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// Timing constants for 1080p50
-//   TimeScale = 50 000 ticks/s  →  FrameDuration = 1 000 ticks/frame  (= 1/50 s)
+// Timing constants for 1080i50
+//   TimeScale = 25 000 ticks/s  →  FrameDuration = 1 000 ticks/frame  (= 1/25 s)
 // ---------------------------------------------------------------------------
-static constexpr BMDTimeScale k_TimeScale     = 50000;
+static constexpr BMDTimeScale k_TimeScale     = 25000;
 static constexpr BMDTimeValue k_FrameDuration = 1000;
 static constexpr int          k_PrerollFrames = 3;   // frames to queue before StartScheduledPlayback
 static constexpr int          k_ClockMargin   = 6;   // extra frames beyond hw clock when prerolling
@@ -98,6 +98,7 @@ public:
                 __uuidof(IDeckLinkVideoBuffer),
                 reinterpret_cast<void**>(&buf))) && buf)
         {
+            buf->StartAccess(bmdBufferAccessWrite);
             void* pixels = nullptr;
             if (SUCCEEDED(buf->GetBytes(&pixels)) && pixels) {
                 std::lock_guard<std::mutex> lk(g_state.stagingMtx);
@@ -117,6 +118,7 @@ public:
                     g_state.stagingFresh = false;
                 }
             }
+            buf->EndAccess(bmdBufferAccessWrite);
             buf->Release();
         }
 
@@ -195,12 +197,12 @@ static Napi::Value Open(const Napi::CallbackInfo& info) {
                        reinterpret_cast<void**>(&g_state.keyer));
     dl->Release();
 
-    // ---- Enable video output — 1080p50 ----
-    hr = g_state.output->EnableVideoOutput(bmdModeHD1080p50, bmdVideoOutputFlagDefault);
+    // ---- Enable video output — 1080i50 ----
+    hr = g_state.output->EnableVideoOutput(bmdModeHD1080i50, bmdVideoOutputFlagDefault);
     if (FAILED(hr)) {
         g_state.output->Release(); g_state.output = nullptr;
         if (g_state.keyer) { g_state.keyer->Release(); g_state.keyer = nullptr; }
-        Napi::Error::New(env, "EnableVideoOutput(1080p50) failed: " + hrStr(hr))
+        Napi::Error::New(env, "EnableVideoOutput(1080i50) failed: " + hrStr(hr))
             .ThrowAsJavaScriptException();
         return env.Undefined();
     }
@@ -234,9 +236,11 @@ static Napi::Value Open(const Napi::CallbackInfo& info) {
         IDeckLinkVideoBuffer* buf = nullptr;
         if (SUCCEEDED(g_state.pool[i]->QueryInterface(
                 __uuidof(IDeckLinkVideoBuffer), reinterpret_cast<void**>(&buf))) && buf) {
+            buf->StartAccess(bmdBufferAccessWrite);
             void* px = nullptr;
             if (SUCCEEDED(buf->GetBytes(&px)) && px)
                 memset(px, 0, 1920 * 1080 * 4);
+            buf->EndAccess(bmdBufferAccessWrite);
             buf->Release();
         }
     }
