@@ -9,6 +9,8 @@ export default defineConfig({
       '/api': 'http://localhost:3001',
       '/uploads': 'http://localhost:3001',
       '/renderer.html': 'http://localhost:3001',
+      '/pixi.min.js':   'http://localhost:3001',
+      '/gsap.min.js':   'http://localhost:3001',
       '/ws': { target: 'ws://localhost:3001', ws: true }
     }
   }
