@@ -4,17 +4,19 @@ import { useEditorStore } from '../../core/store';
 import { Variable } from '../../core/schema';
 
 const TYPE_LABELS: Record<Variable['type'], string> = {
-  text: 'Текст',
+  text:  'Текст',
   image: 'Изображение',
   number: 'Число',
   color: 'Цвет',
+  video: 'Видео',
 };
 
 const TYPE_COLORS: Record<Variable['type'], string> = {
-  text: 'text-blue-400',
+  text:  'text-blue-400',
   image: 'text-green-400',
   number: 'text-yellow-400',
   color: 'text-pink-400',
+  video: 'text-purple-400',
 };
 
 const EMPTY_FORM: Partial<Variable> = { name: '', label: '', type: 'text', defaultValue: '' };

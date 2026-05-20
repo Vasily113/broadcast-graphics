@@ -220,19 +220,20 @@ export class TemplateRenderer {
     if (layer.type === 'video') {
       const sprite = obj as PIXI.Sprite;
       const l = layer as VideoLayer;
-      if (l.src) {
+      const src = this.resolveValue(l.src, variables, '');
+      if (src) {
         const existing = this.videoMap.get(layer.id);
-        if (!existing || existing.src !== l.src) {
+        if (!existing || existing.src !== src) {
           if (existing) { try { existing.el.pause(); existing.el.removeAttribute('src'); existing.el.load(); } catch (e) {} }
           const el = document.createElement('video');
-          el.src = l.src;
+          el.src = src;
           el.loop = l.loop;
           el.muted = true;
           el.autoplay = true;
           el.playsInline = true;
           el.crossOrigin = 'anonymous';
           el.play().catch(() => {});
-          this.videoMap.set(layer.id, { el, src: l.src });
+          this.videoMap.set(layer.id, { el, src });
           sprite.texture = PIXI.Texture.from(el);
         } else {
           existing.el.loop = l.loop;

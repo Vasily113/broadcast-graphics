@@ -22,7 +22,7 @@ export interface Variable {
   id: string;
   name: string;
   label: string;
-  type: 'text' | 'image' | 'number' | 'color';
+  type: 'text' | 'image' | 'number' | 'color' | 'video';
   defaultValue: string | number;
 }
 
@@ -83,7 +83,7 @@ export interface ClockLayer extends BaseLayer {
 
 export interface VideoLayer extends BaseLayer {
   type: 'video';
-  src: string;
+  src: string | VariableBinding;
   loop: boolean;
   fit: 'stretch' | 'contain' | 'cover';
 }

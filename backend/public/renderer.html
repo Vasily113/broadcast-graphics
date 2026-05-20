@@ -207,7 +207,7 @@
     }
 
     if (layer.type === 'video' && entry) {
-      const src = layer.src || '';
+      const src = resolveValue(layer.src, vars, '');
       if (src) {
         const existing = entry.videoMap.get(layer.id);
         if (!existing || existing.src !== src) {
@@ -385,7 +385,7 @@
     }
 
     if (layer.type === 'video') {
-      const src = layer.src || '';
+      const src = resolveValue(layer.src, vars, '');
       let vid = el.querySelector('video');
       if (!vid) {
         vid = document.createElement('video');

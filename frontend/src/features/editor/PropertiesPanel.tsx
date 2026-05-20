@@ -300,7 +300,11 @@ function ImageUploadRow({ value, variables, onChange }: {
 
 // ── Video upload ─────────────────────────────────────────────────────────────
 
-function VideoUploadRow({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function VideoUploadRow({ value, variables, onChange }: {
+  value: string | VariableBinding;
+  variables: Variable[];
+  onChange: (v: string | VariableBinding) => void;
+}) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
@@ -320,26 +324,41 @@ function VideoUploadRow({ value, onChange }: { value: string; onChange: (v: stri
     }
   };
 
+  const src = typeof value === 'string' ? value : '';
+
   return (
-    <div className="flex items-center gap-1 flex-1">
-      <button
-        onClick={() => fileRef.current?.click()}
-        disabled={uploading}
-        className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-surface-700 hover:bg-surface-600 disabled:opacity-40 text-gray-300 transition-colors"
-      >
-        {uploading ? 'Загрузка...' : '↑ Выбрать .webm'}
-      </button>
-      {value && (
-        <span className="text-xs text-green-400 truncate flex-1" title={value}>✓ {value.split('/').pop()}</span>
+    <>
+      <Row>
+        <Lbl>URL</Lbl>
+        <div className="flex gap-1 flex-1">
+          <BindableField value={value} varFilter={variables} onChange={onChange} placeholder="/uploads/video.webm" />
+          <button
+            onClick={() => fileRef.current?.click()}
+            disabled={uploading}
+            title="Загрузить файл"
+            className="flex-shrink-0 px-1.5 bg-surface-600 hover:bg-surface-500 disabled:opacity-40 rounded text-gray-300 transition-colors"
+          >
+            <Upload size={11} />
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="video/webm,video/mp4"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadFile(f); e.target.value = ''; }}
+          />
+        </div>
+      </Row>
+      {uploading && (
+        <Row><Lbl>{''}</Lbl><span className="text-xs text-gray-500">Загрузка...</span></Row>
       )}
-      <input
-        ref={fileRef}
-        type="file"
-        accept="video/webm,video/mp4"
-        className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadFile(f); e.target.value = ''; }}
-      />
-    </div>
+      {src && !uploading && (
+        <Row>
+          <Lbl>{''}</Lbl>
+          <span className="text-xs text-green-400 truncate flex-1" title={src}>✓ {src.split('/').pop()}</span>
+        </Row>
+      )}
+    </>
   );
 }
 
@@ -763,20 +782,11 @@ export function PropertiesPanel() {
         const l = layer as VideoLayer;
         return (
           <Section title="Видео">
-            <Row>
-              <Lbl>URL</Lbl>
-              <input
-                type="text"
-                value={l.src}
-                placeholder="/uploads/video.webm"
-                onChange={(e) => upd({ src: e.target.value })}
-                className="flex-1 min-w-0 bg-surface-700 border border-surface-600 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none focus:border-accent-500"
-              />
-            </Row>
-            <Row>
-              <Lbl>Загрузить</Lbl>
-              <VideoUploadRow value={l.src} onChange={(v) => upd({ src: v })} />
-            </Row>
+            <VideoUploadRow
+              value={l.src}
+              variables={template.variables.filter((v) => v.type === 'video')}
+              onChange={(v) => upd({ src: v })}
+            />
             <Row>
               <Lbl>Режим</Lbl>
               <div className="flex gap-1">
@@ -808,7 +818,7 @@ export function PropertiesPanel() {
                 <span className="text-xs text-gray-400">{l.loop ? 'Да' : 'Нет'}</span>
               </label>
             </Row>
-            {l.src && (
+            {(typeof l.src === 'string' ? l.src : true) && (
               <div className="px-3 pb-2">
                 <p className="text-xs text-gray-500">
                   Используйте <span className="text-accent-400 font-mono">.webm</span> с альфа-каналом для прозрачности (VP9+alpha)

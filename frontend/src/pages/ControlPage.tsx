@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Tv, RefreshCw, ChevronDown, ChevronRight, Zap,
-  GripVertical, Plus, X, SkipBack, SkipForward, Square, List, Layers, Monitor,
+  GripVertical, Plus, X, SkipBack, SkipForward, Square, List, Layers, Monitor, Upload,
 } from 'lucide-react';
 import { DndContext, DragEndEvent, closestCenter } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -20,6 +20,56 @@ type WsStatus = 'connecting' | 'connected' | 'disconnected';
 interface TemplateListItem { id: string; name: string; updated_at: number; }
 interface FullTemplate extends TemplateListItem { data: Template; }
 interface RundownSlot { slotId: string; templateId: string; name: string; vars: Record<string, string>; }
+
+// ── Video variable field (upload + URL in Control panel) ─────────────────────
+
+function ControlVideoField({ value, onChange }: { value: string; onChange: (url: string) => void }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const uploadFile = async (file: File) => {
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch('/api/uploads', { method: 'POST', body: fd });
+      if (!r.ok) throw new Error('Upload failed');
+      const { url } = await r.json();
+      onChange(url);
+    } catch (err) {
+      console.error('Video upload error:', err);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5 flex-1">
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="/uploads/video.webm"
+        className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:border-accent-500"
+      />
+      <button
+        onClick={() => fileRef.current?.click()}
+        disabled={uploading}
+        title="Загрузить видео"
+        className="flex-shrink-0 px-1.5 py-1 bg-surface-600 hover:bg-surface-500 disabled:opacity-40 rounded text-gray-300 transition-colors"
+      >
+        {uploading ? <RefreshCw size={11} className="animate-spin" /> : <Upload size={11} />}
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="video/webm,video/mp4"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadFile(f); e.target.value = ''; }}
+      />
+    </div>
+  );
+}
 
 // ── WebSocket hook ────────────────────────────────────────────────────────────
 
@@ -206,6 +256,11 @@ function TemplateCard({
                     <input type="text" value={vars[v.id] ?? String(v.defaultValue)} onChange={(e) => handleVarChange(v.id, e.target.value)}
                       className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:border-accent-500" />
                   </div>
+                ) : v.type === 'video' ? (
+                  <ControlVideoField
+                    value={vars[v.id] ?? String(v.defaultValue)}
+                    onChange={(url) => handleVarChange(v.id, url)}
+                  />
                 ) : (
                   <input type={v.type === 'number' ? 'number' : 'text'} value={vars[v.id] ?? String(v.defaultValue)}
                     onChange={(e) => handleVarChange(v.id, e.target.value)} placeholder={String(v.defaultValue)}
@@ -336,6 +391,8 @@ function SortableRundownRow({
                       <input type="text" value={val} onChange={(e) => onVarChange(v.id, e.target.value)}
                         className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:border-accent-500" />
                     </div>
+                  ) : v.type === 'video' ? (
+                    <ControlVideoField value={val} onChange={(url) => onVarChange(v.id, url)} />
                   ) : (
                     <input
                       type={v.type === 'number' ? 'number' : 'text'}
