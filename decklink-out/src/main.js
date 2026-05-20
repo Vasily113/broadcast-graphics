@@ -35,7 +35,7 @@ try {
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-const RENDERER_URL = process.env.RENDERER_URL || 'http://localhost:3001/renderer.html?debug';
+const RENDERER_URL = process.env.RENDERER_URL || 'http://localhost:3001/renderer.html';
 const TARGET_FPS   = 25;
 const BACKEND_RETRY_MS = 3000;  // retry loading page if backend not ready yet
 
