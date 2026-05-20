@@ -527,7 +527,11 @@
           resolution: 1,
           antialias: true,
         });
-        window._dbg('PIXI init: WebGL OK');
+        const rendererType = app.renderer.type === 1 ? 'Canvas2D' : 'WebGL';
+        const gl = app.renderer.gl;
+        const gpuInfo = gl ? (gl.getParameter(gl.VERSION) + ' / ' + gl.getParameter(gl.RENDERER)) : 'n/a';
+        console.log(`[Renderer] PIXI init OK — ${rendererType} — ${gpuInfo}`);
+        window._dbg(`PIXI init: ${rendererType} — ${gpuInfo}`);
       } catch (e) {
         window._dbg('PIXI WebGL failed, trying Canvas: ' + e.message);
         try {
