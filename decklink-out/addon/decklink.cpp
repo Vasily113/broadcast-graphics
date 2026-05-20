@@ -207,10 +207,12 @@ static Napi::Value Open(const Napi::CallbackInfo& info) {
         return env.Undefined();
     }
 
-    // ---- Enable internal keyer at full opacity ----
+    // ---- Enable external keyer at full opacity ----
+    // TRUE  = external key: SDI1&3 = Fill (RGB), SDI2&4 = Key (alpha as luma)
+    // FALSE = internal key: composites Fill+Key over SDI input and outputs result
     if (g_state.keyer) {
-        g_state.keyer->Enable(FALSE); // FALSE = internal key (Fill on SDI1, Key on SDI2)
-        g_state.keyer->SetLevel(255); // 255 = fully opaque
+        g_state.keyer->Enable(TRUE);  // TRUE = external key
+        g_state.keyer->SetLevel(255); // 255 = full key signal
     }
 
     // ---- Allocate SDK-managed frame pool ----
