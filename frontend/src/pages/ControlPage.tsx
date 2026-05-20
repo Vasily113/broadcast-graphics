@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Tv, RefreshCw, ChevronDown, ChevronRight, Zap,
   GripVertical, Plus, X, SkipBack, SkipForward, Square, List, Layers, Monitor, Upload,
+  FileDown, FileUp, Copy, Pencil, Trash2, Check,
 } from 'lucide-react';
 import { DndContext, DragEndEvent, closestCenter } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -20,6 +21,7 @@ type WsStatus = 'connecting' | 'connected' | 'disconnected';
 interface TemplateListItem { id: string; name: string; updated_at: number; }
 interface FullTemplate extends TemplateListItem { data: Template; }
 interface RundownSlot { slotId: string; templateId: string; name: string; vars: Record<string, string>; }
+interface RundownData { id: string; name: string; slots: RundownSlot[]; created_at: number; updated_at: number; }
 
 // ── Video variable field (upload + URL in Control panel) ─────────────────────
 
@@ -167,7 +169,6 @@ function TemplateCard({
   const handleSelect = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const row = await loadFull();
-    // Build vars: use current state if already populated, else default from template
     const defaults: Record<string, string> = {};
     (row.data?.variables ?? []).forEach((v: Variable) => { defaults[v.id] = String(v.defaultValue ?? ''); });
     const currentVars = Object.keys(vars).length > 0 ? vars : defaults;
@@ -194,7 +195,6 @@ function TemplateCard({
     } ${focused && !onAir && !isSelected ? 'ring-2 ring-white/30' : ''}`}>
       {/* Main row */}
       <div className="flex items-center gap-3 px-3 py-2">
-        {/* Thumbnail — click to preview */}
         <div
           className="flex-shrink-0 w-24 h-[54px] rounded overflow-hidden bg-surface-700 cursor-pointer ring-0 hover:ring-1 hover:ring-accent-500 transition-all"
           onClick={handleSelect}
@@ -203,7 +203,6 @@ function TemplateCard({
           <TemplateThumbnail templateId={item.id} width={192} height={108} className="w-full h-full" />
         </div>
 
-        {/* Name + badges — click to preview */}
         <div className="flex-1 min-w-0 cursor-pointer" onClick={handleSelect}>
           <span className="block font-medium text-white text-sm truncate">{item.name}</span>
           <div className="flex items-center gap-2 mt-0.5">
@@ -221,7 +220,6 @@ function TemplateCard({
           </div>
         </div>
 
-        {/* Controls */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
           <button onClick={expand} className="text-gray-600 hover:text-white transition-colors p-1">
             {loading ? <RefreshCw size={13} className="animate-spin" /> : expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
@@ -240,7 +238,6 @@ function TemplateCard({
         </div>
       </div>
 
-      {/* Variables panel */}
       {expanded && (
         <div className="border-t border-surface-700 px-3 py-2.5 space-y-2 bg-surface-800/60">
           {variables.length === 0 ? (
@@ -345,15 +342,12 @@ function SortableRundownRow({
           <span className="px-2 py-0.5 bg-accent-500/20 rounded text-xs text-accent-400 flex-shrink-0">NEXT</span>
         )}
 
-        {/* Expand toggle — only show if template has variables or is loading */}
         <button
           onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}
           className="text-gray-600 hover:text-gray-300 flex-shrink-0 transition-colors"
           title="Переменные"
         >
-          {expanded
-            ? <ChevronDown size={13} />
-            : <ChevronRight size={13} />}
+          {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </button>
 
         {status === 'on-air' ? (
@@ -457,12 +451,10 @@ export function ControlPage() {
   // ── Template tab keyboard focus ─────────────────────────────────────────
   const [tmplFocusIdx, setTmplFocusIdx] = useState(0);
 
-  // Clamp when list changes
   useEffect(() => {
     if (templates.length > 0) setTmplFocusIdx((i) => Math.min(i, templates.length - 1));
   }, [templates.length]);
 
-  // Scroll focused card into view
   useEffect(() => {
     if (tab !== 'templates' || templates.length === 0) return;
     document.getElementById(`tmpl-card-${templates[tmplFocusIdx]?.id}`)
@@ -471,7 +463,6 @@ export function ControlPage() {
 
   // ── Template tab state ──────────────────────────────────────────────────
   const handleTake = useCallback(async (id: string, vars: Record<string, string>) => {
-    // Always fetch fresh so the renderer gets the latest saved version
     const r = await fetch(`/api/templates/${id}`);
     const fresh = await r.json();
     setFullCache((s) => ({ ...s, [id]: fresh }));
@@ -492,24 +483,164 @@ export function ControlPage() {
     fetch('/api/templates').then((r) => r.json()).then(setTemplates);
   }, []);
 
-  // ── Rundown state ───────────────────────────────────────────────────────
-  const [rundown, setRundown] = useState<RundownSlot[]>(() => {
+  // ── Rundown management state ────────────────────────────────────────────
+  const [rundowns, setRundowns] = useState<RundownData[]>([]);
+  const [activeRundownId, setActiveRundownId] = useState<string | null>(null);
+  const [loadingRundowns, setLoadingRundowns] = useState(true);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameVal, setRenameVal] = useState('');
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
+
+  // Derived: active rundown's slots (backward-compat alias)
+  const activeRundown = rundowns.find(r => r.id === activeRundownId) ?? null;
+  const rundown = activeRundown?.slots ?? [];
+
+  // Proxy setter: updates slots in the active rundown inside the rundowns array
+  const setRundown = useCallback((updater: RundownSlot[] | ((prev: RundownSlot[]) => RundownSlot[])) => {
+    setRundowns(prev => prev.map(r => {
+      if (r.id !== activeRundownId) return r;
+      const newSlots = typeof updater === 'function' ? updater(r.slots) : updater;
+      return { ...r, slots: newSlots, updated_at: Math.floor(Date.now() / 1000) };
+    }));
+  }, [activeRundownId]);
+
+  // Load rundowns from backend on mount
+  useEffect(() => {
+    setLoadingRundowns(true);
+    fetch('/api/rundowns')
+      .then(r => r.json())
+      .then(async (list: RundownData[]) => {
+        if (list.length === 0) {
+          // Auto-create first rundown
+          const r = await fetch('/api/rundowns', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Rundown 1', slots: [] }),
+          });
+          const created: RundownData = await r.json();
+          setRundowns([created]);
+          setActiveRundownId(created.id);
+        } else {
+          setRundowns(list);
+          setActiveRundownId(list[0].id);
+        }
+      })
+      .finally(() => setLoadingRundowns(false));
+  }, []);
+
+  // Auto-save active rundown's slots to backend (debounced 500ms)
+  useEffect(() => {
+    if (!activeRundownId || loadingRundowns) return;
+    saveTimerRef.current && clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      const rd = rundowns.find(r => r.id === activeRundownId);
+      if (!rd) return;
+      await fetch(`/api/rundowns/${activeRundownId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: rd.name, slots: rd.slots }),
+      });
+    }, 500);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rundowns, activeRundownId]);
+
+  // ── Rundown CRUD actions ────────────────────────────────────────────────
+  const createRundown = useCallback(async () => {
+    const name = `Rundown ${rundowns.length + 1}`;
+    const r = await fetch('/api/rundowns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, slots: [] }),
+    });
+    const created: RundownData = await r.json();
+    setRundowns(prev => [created, ...prev]);
+    setActiveRundownId(created.id);
+  }, [rundowns.length]);
+
+  const deleteRundown = useCallback(async (id: string) => {
+    if (rundowns.length <= 1) return;
+    await fetch(`/api/rundowns/${id}`, { method: 'DELETE' });
+    setRundowns(prev => {
+      const next = prev.filter(r => r.id !== id);
+      if (activeRundownId === id) setActiveRundownId(next[0]?.id ?? null);
+      return next;
+    });
+  }, [rundowns.length, activeRundownId]);
+
+  const duplicateRundown = useCallback(async (id: string) => {
+    const src = rundowns.find(r => r.id === id);
+    if (!src) return;
+    const r = await fetch('/api/rundowns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: src.name + ' (копия)',
+        slots: src.slots.map(s => ({ ...s, slotId: crypto.randomUUID() })),
+      }),
+    });
+    const created: RundownData = await r.json();
+    setRundowns(prev => [created, ...prev]);
+    setActiveRundownId(created.id);
+  }, [rundowns]);
+
+  const commitRename = useCallback(async (id: string) => {
+    const trimmed = renameVal.trim();
+    if (!trimmed) { setRenamingId(null); return; }
+    await fetch(`/api/rundowns/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: trimmed }),
+    });
+    setRundowns(prev => prev.map(r => r.id === id ? { ...r, name: trimmed } : r));
+    setRenamingId(null);
+  }, [renameVal]);
+
+  const exportRundown = useCallback((id: string) => {
+    const rd = rundowns.find(r => r.id === id);
+    if (!rd) return;
+    const blob = new Blob([JSON.stringify(rd, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${rd.name.replace(/[^a-z0-9а-яё]/gi, '_')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [rundowns]);
+
+  const importRundown = useCallback(async (file: File) => {
     try {
-      const saved = localStorage.getItem('broadcast-rundown');
-      return saved ? (JSON.parse(saved) as RundownSlot[]) : [];
-    } catch { return []; }
-  });
+      const text = await file.text();
+      const data = JSON.parse(text) as Partial<RundownData>;
+      const r = await fetch('/api/rundowns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: data.name ?? 'Импортированный rundown',
+          slots: (data.slots ?? []).map(s => ({ ...s, slotId: crypto.randomUUID() })),
+        }),
+      });
+      const created: RundownData = await r.json();
+      setRundowns(prev => [created, ...prev]);
+      setActiveRundownId(created.id);
+    } catch (err) {
+      console.error('Import error:', err);
+    }
+  }, []);
+
+  // ── Rundown slot state ──────────────────────────────────────────────────
   const [rdOnAirSet, setRdOnAirSet] = useState<Set<string>>(new Set());
   const [rdFocusIdx, setRdFocusIdx] = useState(0);
 
-  useEffect(() => {
-    localStorage.setItem('broadcast-rundown', JSON.stringify(rundown));
-  }, [rundown]);
-
-  // Clamp focus when rundown shrinks
+  // Clamp focus when rundown changes
   useEffect(() => {
     if (rundown.length > 0) setRdFocusIdx(i => Math.min(i, rundown.length - 1));
   }, [rundown.length]);
+
+  // Reset focus when switching rundowns
+  useEffect(() => {
+    setRdFocusIdx(0);
+  }, [activeRundownId]);
 
   // Scroll focused item into view
   useEffect(() => {
@@ -518,6 +649,7 @@ export function ControlPage() {
         ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   }, [rdFocusIdx]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [expandedSlots, setExpandedSlots] = useState<Set<string>>(new Set());
   const liveUpdateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -546,7 +678,6 @@ export function ControlPage() {
       next.add(slotId);
       return next;
     });
-    // Pre-fetch template so variables appear immediately on expand
     const slot = rundown.find((s) => s.slotId === slotId);
     if (slot && !fullCache[slot.templateId]) rdFetchTemplate(slot.templateId);
   }, [rundown, fullCache, rdFetchTemplate]);
@@ -556,7 +687,6 @@ export function ControlPage() {
       s.slotId === slotId ? { ...s, vars: { ...s.vars, [varId]: value } } : s
     ));
 
-    // Live update if this slot is currently on-air
     if (!rdOnAirSet.has(slotId)) return;
     const slot = rundown.find((s) => s.slotId === slotId);
     if (!slot) return;
@@ -569,15 +699,14 @@ export function ControlPage() {
       (full.data?.variables ?? []).forEach((v: Variable) => {
         vars[v.id] = slot.vars[v.id] ?? String(v.defaultValue ?? '');
       });
-      vars[varId] = value; // apply the latest change
+      vars[varId] = value;
       send({ type: 'update', templateId: slotId, variables: vars });
     }, 300);
-  }, [rundown, rdOnAirSet, fullCache, send]);
+  }, [rundown, rdOnAirSet, fullCache, send, setRundown]);
 
   const rdTakeAt = useCallback(async (index: number) => {
     if (index < 0 || index >= rundown.length) return;
     const slot = rundown[index];
-    // Always fetch fresh so the renderer gets the latest saved version
     const r = await fetch(`/api/templates/${slot.templateId}`);
     const full: FullTemplate = await r.json();
     setFullCache((s) => ({ ...s, [slot.templateId]: full }));
@@ -652,7 +781,7 @@ export function ControlPage() {
   const rdRemoveSlot = useCallback((slotId: string) => {
     if (rdOnAirSet.has(slotId)) rdClearSlot(slotId);
     setRundown((prev) => prev.filter((s) => s.slotId !== slotId));
-  }, [rdOnAirSet, rdClearSlot]);
+  }, [rdOnAirSet, rdClearSlot, setRundown]);
 
   const rdHandleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
@@ -666,7 +795,7 @@ export function ControlPage() {
       next.splice(to, 0, item);
       return next;
     });
-  }, []);
+  }, [setRundown]);
 
   // Auto-preview focused template card
   useEffect(() => {
@@ -712,6 +841,11 @@ export function ControlPage() {
   const canNext = rdFocusIdx < rundown.length - 1;
   const canPrev = rdFocusIdx > 0;
 
+  // Count on-air slots across ALL rundowns (for a given rundown in the sidebar)
+  const onAirCountForRundown = useCallback((rd: RundownData) => {
+    return rd.slots.filter(s => rdOnAirSet.has(s.slotId)).length;
+  }, [rdOnAirSet]);
+
   return (
     <div className="h-screen bg-surface-900 flex flex-col overflow-hidden">
       {/* Header */}
@@ -748,8 +882,8 @@ export function ControlPage() {
           }`}
         >
           <List size={13} /> Rundown
-          {rundown.length > 0 && (
-            <span className="px-1.5 py-0.5 bg-surface-600 rounded-full text-gray-400">{rundown.length}</span>
+          {rundowns.length > 0 && (
+            <span className="px-1.5 py-0.5 bg-surface-600 rounded-full text-gray-400">{rundowns.length}</span>
           )}
         </button>
       </div>
@@ -763,7 +897,6 @@ export function ControlPage() {
       {/* Templates tab */}
       {tab === 'templates' && (
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Hints + CLEAR ALL bar */}
           <div className="flex items-center gap-3 px-4 py-2 border-b border-surface-700 bg-surface-800/50 flex-shrink-0">
             <span className="text-xs text-gray-600 select-none flex items-center gap-2">
               <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>↑↓</kbd>
@@ -817,120 +950,263 @@ export function ControlPage() {
 
       {/* Rundown tab */}
       {tab === 'rundown' && (
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Transport bar */}
-          <div className="flex items-center gap-3 px-6 py-3 border-b border-surface-700 bg-surface-800/50 flex-shrink-0">
-            <button
-              onClick={() => { const i = rdFocusIdx - 1; setRdFocusIdx(Math.max(0, i)); rdTakeAt(Math.max(0, i)); }}
-              disabled={!canPrev}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-surface-700 hover:bg-surface-600 disabled:opacity-30 text-gray-300 transition-colors"
-              title="Предыдущий"
-            >
-              <SkipBack size={13} /> PREV
-            </button>
+        <div className="flex-1 flex overflow-hidden">
 
-            <span className="text-xs text-gray-500 min-w-[3rem] text-center">
-              {rdFocusIdx + 1} / {rundown.length || '—'}
-            </span>
+          {/* ── Left sidebar: rundowns list ─────────────────────────────── */}
+          <div className="w-52 border-r border-surface-700 bg-surface-950 flex flex-col flex-shrink-0">
+            {/* Sidebar header */}
+            <div className="flex items-center gap-1.5 px-3 py-2.5 border-b border-surface-700 flex-shrink-0">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex-1">Rundowns</span>
+              {/* Import */}
+              <button
+                onClick={() => importFileRef.current?.click()}
+                title="Импорт из JSON"
+                className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-700 transition-colors"
+              >
+                <FileUp size={13} />
+              </button>
+              <input
+                ref={importFileRef}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) importRundown(f); e.target.value = ''; }}
+              />
+              {/* Create */}
+              <button
+                onClick={createRundown}
+                title="Создать rundown"
+                className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-700 transition-colors"
+              >
+                <Plus size={13} />
+              </button>
+            </div>
 
-            <button
-              onClick={() => { const i = rdFocusIdx + 1; setRdFocusIdx(Math.min(rundown.length - 1, i)); rdTakeAt(i); }}
-              disabled={!canNext}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded text-xs font-bold bg-accent-500 hover:bg-accent-600 disabled:opacity-30 text-white transition-colors"
-              title="Следующий"
-            >
-              NEXT <SkipForward size={13} />
-            </button>
-
-            <button
-              onClick={rdClearAll}
-              disabled={rdOnAirSet.size === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-surface-700 hover:bg-surface-600 disabled:opacity-30 text-gray-300 transition-colors"
-              title="Убрать всё из эфира"
-            >
-              <Square size={12} /> CLEAR ALL
-            </button>
-
-            <div className="flex-1" />
-            <span className="text-xs text-gray-600 select-none hidden sm:flex items-center gap-2">
-              <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>↑↓</kbd>
-              <span>навигация</span>
-              <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>⎵</kbd>
-              <span>взять</span>
-              <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>⌫</kbd>
-              <span>убрать</span>
-            </span>
-          </div>
-
-          {/* Rundown list */}
-          <div className="flex-1 overflow-y-auto p-6">
-            <div className="max-w-3xl mx-auto space-y-2">
-              {rundown.length === 0 ? (
-                <div className="text-center py-16 text-gray-600">
-                  <List size={32} className="mx-auto mb-3 opacity-30" />
-                  <p className="text-sm">Rundown пустой</p>
-                  <p className="text-xs mt-1">Нажмите «+ Добавить» чтобы добавить шаблоны</p>
+            {/* Rundowns list */}
+            <div className="flex-1 overflow-y-auto py-1">
+              {loadingRundowns ? (
+                <div className="flex items-center justify-center py-8 text-gray-600">
+                  <RefreshCw size={16} className="animate-spin" />
                 </div>
-              ) : (
-                <DndContext collisionDetection={closestCenter} onDragEnd={rdHandleDragEnd}>
-                  <SortableContext items={rundown.map((s) => s.slotId)} strategy={verticalListSortingStrategy}>
-                    {rundown.map((slot, i) => {
-                      const onAir = rdOnAirSet.has(slot.slotId);
-                      const slotStatus = onAir ? 'on-air' : i === rdFocusIdx ? 'next' : 'pending';
-                      return (
-                        <SortableRundownRow
-                          key={slot.slotId}
-                          slot={slot} index={i}
-                          status={slotStatus}
-                          focused={i === rdFocusIdx}
-                          full={fullCache[slot.templateId] ?? null}
-                          expanded={expandedSlots.has(slot.slotId)}
-                          onTake={() => { rdTakeAt(i); setRdFocusIdx(Math.min(i + 1, rundown.length - 1)); }}
-                          onClear={() => rdClearSlot(slot.slotId)}
-                          onRemove={() => rdRemoveSlot(slot.slotId)}
-                          onToggleExpand={() => toggleSlotExpand(slot.slotId)}
-                          onVarChange={(varId, value) => updateSlotVar(slot.slotId, varId, value)}
-                          onNeedFull={() => rdFetchTemplate(slot.templateId)}
-                          onFocus={() => setRdFocusIdx(i)}
-                        />
-                      );
-                    })}
-                  </SortableContext>
-                </DndContext>
-              )}
+              ) : rundowns.map(rd => {
+                const isActive = rd.id === activeRundownId;
+                const onAirCount = onAirCountForRundown(rd);
+                const isRenaming = renamingId === rd.id;
 
-              {/* Add button */}
-              <div className="relative pt-2">
-                <button
-                  onClick={() => setShowAddMenu((v) => !v)}
-                  className="flex items-center gap-2 w-full px-4 py-2.5 rounded-lg border border-dashed border-surface-600 text-gray-500 hover:border-accent-500 hover:text-accent-400 text-sm transition-colors"
-                >
-                  <Plus size={14} /> Добавить шаблон
-                </button>
-
-                {showAddMenu && (
-                  <div className="absolute left-0 right-0 mt-1 bg-surface-800 border border-surface-600 rounded-xl shadow-xl z-10 max-h-64 overflow-y-auto">
-                    {templates.length === 0 ? (
-                      <p className="px-4 py-3 text-xs text-gray-500">Нет шаблонов</p>
-                    ) : (
-                      templates.map((t) => (
-                        <button
-                          key={t.id}
-                          onClick={() => {
-                            setRundown((prev) => [...prev, { slotId: crypto.randomUUID(), templateId: t.id, name: t.name, vars: {} }]);
-                            setShowAddMenu(false);
+                return (
+                  <div
+                    key={rd.id}
+                    onClick={() => { if (!isRenaming) setActiveRundownId(rd.id); }}
+                    className={`group relative flex flex-col px-3 py-2 cursor-pointer transition-colors ${
+                      isActive
+                        ? 'bg-accent-500/10 border-l-2 border-accent-500'
+                        : 'border-l-2 border-transparent hover:bg-surface-800'
+                    }`}
+                  >
+                    {/* Name row */}
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {isRenaming ? (
+                        <input
+                          autoFocus
+                          value={renameVal}
+                          onChange={(e) => setRenameVal(e.target.value)}
+                          onBlur={() => commitRename(rd.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') commitRename(rd.id);
+                            if (e.key === 'Escape') setRenamingId(null);
                           }}
-                          className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-surface-700 hover:text-white transition-colors"
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex-1 min-w-0 bg-surface-700 border border-accent-500 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none"
+                        />
+                      ) : (
+                        <span className={`flex-1 text-xs truncate ${isActive ? 'text-white font-medium' : 'text-gray-400'}`}>
+                          {rd.name}
+                        </span>
+                      )}
+                      {onAirCount > 0 && !isRenaming && (
+                        <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" title={`${onAirCount} в эфире`} />
+                      )}
+                    </div>
+
+                    {/* Meta */}
+                    {!isRenaming && (
+                      <span className="text-[10px] text-gray-600 mt-0.5">
+                        {rd.slots.length} {rd.slots.length === 1 ? 'слот' : rd.slots.length < 5 ? 'слота' : 'слотов'}
+                      </span>
+                    )}
+
+                    {/* Action buttons (shown on hover or active) */}
+                    {!isRenaming && (
+                      <div className={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 transition-opacity ${
+                        isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                      }`}>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setRenamingId(rd.id); setRenameVal(rd.name); }}
+                          title="Переименовать"
+                          className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-600 transition-colors"
                         >
-                          {t.name}
+                          <Pencil size={11} />
                         </button>
-                      ))
+                        <button
+                          onClick={(e) => { e.stopPropagation(); duplicateRundown(rd.id); }}
+                          title="Дублировать"
+                          className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-600 transition-colors"
+                        >
+                          <Copy size={11} />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); exportRundown(rd.id); }}
+                          title="Экспорт JSON"
+                          className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-600 transition-colors"
+                        >
+                          <FileDown size={11} />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); deleteRundown(rd.id); }}
+                          title="Удалить"
+                          disabled={rundowns.length <= 1}
+                          className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-surface-600 disabled:opacity-20 transition-colors"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      </div>
+                    )}
+                    {isRenaming && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); commitRename(rd.id); }}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-green-400 hover:bg-surface-600"
+                      >
+                        <Check size={11} />
+                      </button>
                     )}
                   </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── Right panel: active rundown slots ──────────────────────── */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Transport bar */}
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-surface-700 bg-surface-800/50 flex-shrink-0">
+              <button
+                onClick={() => { const i = rdFocusIdx - 1; setRdFocusIdx(Math.max(0, i)); rdTakeAt(Math.max(0, i)); }}
+                disabled={!canPrev}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-surface-700 hover:bg-surface-600 disabled:opacity-30 text-gray-300 transition-colors"
+                title="Предыдущий"
+              >
+                <SkipBack size={13} /> PREV
+              </button>
+
+              <span className="text-xs text-gray-500 min-w-[3rem] text-center">
+                {rdFocusIdx + 1} / {rundown.length || '—'}
+              </span>
+
+              <button
+                onClick={() => { const i = rdFocusIdx + 1; setRdFocusIdx(Math.min(rundown.length - 1, i)); rdTakeAt(i); }}
+                disabled={!canNext}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded text-xs font-bold bg-accent-500 hover:bg-accent-600 disabled:opacity-30 text-white transition-colors"
+                title="Следующий"
+              >
+                NEXT <SkipForward size={13} />
+              </button>
+
+              <button
+                onClick={rdClearAll}
+                disabled={rdOnAirSet.size === 0}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-surface-700 hover:bg-surface-600 disabled:opacity-30 text-gray-300 transition-colors"
+                title="Убрать всё из эфира"
+              >
+                <Square size={12} /> CLEAR ALL
+              </button>
+
+              {/* Active rundown name */}
+              <span className="text-xs text-gray-500 truncate hidden sm:block">
+                {activeRundown?.name ?? ''}
+              </span>
+
+              <div className="flex-1" />
+              <span className="text-xs text-gray-600 select-none hidden sm:flex items-center gap-2">
+                <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>↑↓</kbd>
+                <span>навигация</span>
+                <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>⎵</kbd>
+                <span>взять</span>
+                <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>⌫</kbd>
+                <span>убрать</span>
+              </span>
+            </div>
+
+            {/* Rundown list */}
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="max-w-3xl mx-auto space-y-2">
+                {rundown.length === 0 ? (
+                  <div className="text-center py-16 text-gray-600">
+                    <List size={32} className="mx-auto mb-3 opacity-30" />
+                    <p className="text-sm">Rundown пустой</p>
+                    <p className="text-xs mt-1">Нажмите «+ Добавить» чтобы добавить шаблоны</p>
+                  </div>
+                ) : (
+                  <DndContext collisionDetection={closestCenter} onDragEnd={rdHandleDragEnd}>
+                    <SortableContext items={rundown.map((s) => s.slotId)} strategy={verticalListSortingStrategy}>
+                      {rundown.map((slot, i) => {
+                        const onAir = rdOnAirSet.has(slot.slotId);
+                        const slotStatus = onAir ? 'on-air' : i === rdFocusIdx ? 'next' : 'pending';
+                        return (
+                          <SortableRundownRow
+                            key={slot.slotId}
+                            slot={slot} index={i}
+                            status={slotStatus}
+                            focused={i === rdFocusIdx}
+                            full={fullCache[slot.templateId] ?? null}
+                            expanded={expandedSlots.has(slot.slotId)}
+                            onTake={() => { rdTakeAt(i); setRdFocusIdx(Math.min(i + 1, rundown.length - 1)); }}
+                            onClear={() => rdClearSlot(slot.slotId)}
+                            onRemove={() => rdRemoveSlot(slot.slotId)}
+                            onToggleExpand={() => toggleSlotExpand(slot.slotId)}
+                            onVarChange={(varId, value) => updateSlotVar(slot.slotId, varId, value)}
+                            onNeedFull={() => rdFetchTemplate(slot.templateId)}
+                            onFocus={() => setRdFocusIdx(i)}
+                          />
+                        );
+                      })}
+                    </SortableContext>
+                  </DndContext>
                 )}
+
+                {/* Add button */}
+                <div className="relative pt-2">
+                  <button
+                    onClick={() => setShowAddMenu((v) => !v)}
+                    className="flex items-center gap-2 w-full px-4 py-2.5 rounded-lg border border-dashed border-surface-600 text-gray-500 hover:border-accent-500 hover:text-accent-400 text-sm transition-colors"
+                  >
+                    <Plus size={14} /> Добавить шаблон
+                  </button>
+
+                  {showAddMenu && (
+                    <div className="absolute left-0 right-0 mt-1 bg-surface-800 border border-surface-600 rounded-xl shadow-xl z-10 max-h-64 overflow-y-auto">
+                      {templates.length === 0 ? (
+                        <p className="px-4 py-3 text-xs text-gray-500">Нет шаблонов</p>
+                      ) : (
+                        templates.map((t) => (
+                          <button
+                            key={t.id}
+                            onClick={() => {
+                              setRundown((prev) => [...prev, { slotId: crypto.randomUUID(), templateId: t.id, name: t.name, vars: {} }]);
+                              setShowAddMenu(false);
+                            }}
+                            className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-surface-700 hover:text-white transition-colors"
+                          >
+                            {t.name}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
+
         </div>
       )}
 
@@ -938,7 +1214,6 @@ export function ControlPage() {
 
       {/* ── Preview panel ────────────────────────────────────────────── */}
       <div className="w-72 xl:w-96 border-l border-surface-700 bg-surface-950 flex flex-col flex-shrink-0">
-        {/* Header */}
         <div className="px-4 py-3 border-b border-surface-700 flex items-center gap-2 flex-shrink-0">
           <Monitor size={13} className="text-accent-400" />
           <span className="text-xs font-semibold text-white uppercase tracking-wider">Preview</span>
@@ -947,7 +1222,6 @@ export function ControlPage() {
           )}
         </div>
 
-        {/* 16:9 iframe */}
         <div className="p-3 flex-shrink-0">
           <div
             className="relative w-full rounded overflow-hidden border border-surface-700 bg-[#0a0a0f]"

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { templateRouter } from './routes/templates.js';
 import { controlRouter } from './routes/control.js';
 import { uploadsRouter } from './routes/uploads.js';
+import { rundownRouter } from './routes/rundowns.js';
 import { initDb } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -60,6 +61,7 @@ app.ws('/ws/control', (ws) => {
 app.use('/api/templates', templateRouter);
 app.use('/api/control', controlRouter);
 app.use('/api/uploads', uploadsRouter);
+app.use('/api/rundowns', rundownRouter);
 app.use('/uploads', express.static(path.resolve(__dirname, '../../data/uploads')));
 app.use(express.static(path.resolve(__dirname, '../public')));
 
