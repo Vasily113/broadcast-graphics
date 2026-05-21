@@ -195,9 +195,13 @@ app.whenReady().then(async () => {
     lastPaintLog = Date.now();
 
     const settings = await getSettings();
-    console.log(`[DeckLink] Settings: mode=${settings.display_mode}  keyer=${settings.keyer_mode}`);
+    console.log(`[DeckLink] Settings: device=${settings.device_index}  mode=${settings.display_mode}  keyer=${settings.keyer_mode}`);
 
-    openDeckLink(settings.device_index, settings.display_mode, settings.keyer_mode);
+    if (settings.device_index === -1) {
+        console.log('[DeckLink] SDI output disabled (device_index=-1) — renderer only, no DeckLink');
+    } else {
+        openDeckLink(settings.device_index, settings.display_mode, settings.keyer_mode);
+    }
     createWindow(settings.display_mode);
 });
 

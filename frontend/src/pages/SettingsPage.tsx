@@ -31,8 +31,9 @@ const KEYER_MODES = [
 // by DoesSupportVideoMode() filtering in the addon, so index 0 → first output pair
 // (SDI 1+2) and index 1 → second output pair (SDI 5+6).
 const SUB_DEVICES = [
-  { index: 0, label: 'Sub-device 0 — SDI 1 (Fill) + SDI 2 (Key)' },
-  { index: 1, label: 'Sub-device 1 — SDI 5 (Fill) + SDI 6 (Key)' },
+  { index: -1, label: 'Нет (только браузер / OBS)' },
+  { index:  0, label: 'Sub-device 0 — SDI 1 (Fill) + SDI 2 (Key)' },
+  { index:  1, label: 'Sub-device 1 — SDI 5 (Fill) + SDI 6 (Key)' },
 ];
 
 export const CHANNEL_COLORS = [
@@ -215,8 +216,8 @@ export function SettingsPage() {
                         </div>
                       </div>
 
-                      {/* Row 2: display mode + keyer mode */}
-                      <div className="flex items-end gap-3 flex-wrap">
+                      {/* Row 2: display mode + keyer mode — hidden when SDI disabled */}
+                      <div className={`flex items-end gap-3 flex-wrap ${ch.device_index === -1 ? 'hidden' : ''}`}>
                         <div className="flex-1 min-w-36">
                           <label className="block text-xs text-gray-500 mb-1">Формат вывода</label>
                           <select

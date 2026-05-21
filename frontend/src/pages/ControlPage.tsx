@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { CHANNEL_COLORS } from './SettingsPage';
 import { DndContext, DragEndEvent, closestCenter } from '@dnd-kit/core';
-import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Template, Variable } from '../core/schema';
 import { TemplateThumbnail } from '../features/templates/TemplateThumbnail';
@@ -324,6 +324,116 @@ function TemplateCard({
             ))
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── Sortable rundown sidebar item ─────────────────────────────────────────────
+
+function SortableRundownItem({
+  rd, isActive, onAirCount, isRenaming, renameVal, rdChColor, rdChIdx, channels,
+  rundownsLength, onActivate, onStartRename, onRenameChange, onCommitRename,
+  onCancelRename, onDuplicate, onExport, onDelete,
+}: {
+  rd: RundownData;
+  isActive: boolean;
+  onAirCount: number;
+  isRenaming: boolean;
+  renameVal: string;
+  rdChColor: string | null;
+  rdChIdx: number;
+  channels: Channel[];
+  rundownsLength: number;
+  onActivate: () => void;
+  onStartRename: () => void;
+  onRenameChange: (v: string) => void;
+  onCommitRename: () => void;
+  onCancelRename: () => void;
+  onDuplicate: () => void;
+  onExport: () => void;
+  onDelete: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: rd.id });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
+      onClick={() => { if (!isRenaming) onActivate(); }}
+      className={`group relative flex items-stretch cursor-pointer transition-colors ${
+        isActive ? 'bg-accent-500/10 border-l-2 border-accent-500' : 'border-l-2 border-transparent hover:bg-surface-800'
+      }`}
+    >
+      {/* Drag handle */}
+      <div
+        {...attributes}
+        {...listeners}
+        onClick={e => e.stopPropagation()}
+        className="flex items-center pl-1.5 pr-0.5 text-gray-700 hover:text-gray-400 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+      >
+        <GripVertical size={12} />
+      </div>
+
+      {/* Content */}
+      <div className="flex flex-col flex-1 min-w-0 py-2 pr-3">
+        <div className="flex items-center gap-1.5 min-w-0">
+          {rdChColor && !isRenaming && (
+            <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full" style={{ background: rdChColor }} title={channels[rdChIdx]?.name} />
+          )}
+          {isRenaming ? (
+            <input
+              autoFocus
+              value={renameVal}
+              onChange={(e) => onRenameChange(e.target.value)}
+              onBlur={onCommitRename}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') onCommitRename();
+                if (e.key === 'Escape') onCancelRename();
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 min-w-0 bg-surface-700 border border-accent-500 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none"
+            />
+          ) : (
+            <span className={`flex-1 text-xs truncate ${isActive ? 'text-white font-medium' : 'text-gray-400'}`}>
+              {rd.name}
+            </span>
+          )}
+          {onAirCount > 0 && !isRenaming && (
+            <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" title={`${onAirCount} в эфире`} />
+          )}
+        </div>
+        {!isRenaming && (
+          <span className="text-[10px] text-gray-600 mt-0.5">
+            {rd.slots.length} {rd.slots.length === 1 ? 'слот' : rd.slots.length < 5 ? 'слота' : 'слотов'}
+          </span>
+        )}
+      </div>
+
+      {/* Action buttons (hover / active) */}
+      {!isRenaming && (
+        <div className={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 transition-opacity ${
+          isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        }`}>
+          <button onClick={(e) => { e.stopPropagation(); onStartRename(); }} title="Переименовать" className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-600 transition-colors">
+            <Pencil size={11} />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); onDuplicate(); }} title="Дублировать" className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-600 transition-colors">
+            <Copy size={11} />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); onExport(); }} title="Экспорт JSON" className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-600 transition-colors">
+            <FileDown size={11} />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Удалить" disabled={rundownsLength <= 1} className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-surface-600 disabled:opacity-20 transition-colors">
+            <Trash2 size={11} />
+          </button>
+        </div>
+      )}
+      {isRenaming && (
+        <button onClick={(e) => { e.stopPropagation(); onCommitRename(); }} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-green-400 hover:bg-surface-600">
+          <Check size={11} />
+        </button>
       )}
     </div>
   );
@@ -875,6 +985,23 @@ export function ControlPage() {
     });
   }, [setRundown]);
 
+  const handleRundownsDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setRundowns(prev => {
+      const from = prev.findIndex(r => r.id === active.id);
+      const to   = prev.findIndex(r => r.id === over.id);
+      if (from === -1 || to === -1) return prev;
+      const next = arrayMove(prev, from, to);
+      fetch('/api/rundowns/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: next.map(r => r.id) }),
+      });
+      return next;
+    });
+  }, []);
+
   // Auto-preview focused template card
   useEffect(() => {
     if (tab !== 'templates' || templates.length === 0) return;
@@ -1072,109 +1199,41 @@ export function ControlPage() {
                 <div className="flex items-center justify-center py-8 text-gray-600">
                   <RefreshCw size={16} className="animate-spin" />
                 </div>
-              ) : rundowns.map(rd => {
-                const isActive = rd.id === activeRundownId;
-                const onAirCount = onAirCountForRundown(rd);
-                const isRenaming = renamingId === rd.id;
-                const rdChIdx = rd.channelId ? channels.findIndex(c => c.id === rd.channelId) : -1;
-                const rdChColor = rdChIdx >= 0 ? CHANNEL_COLORS[rdChIdx % CHANNEL_COLORS.length] : null;
-
-                return (
-                  <div
-                    key={rd.id}
-                    onClick={() => { if (!isRenaming) setActiveRundownId(rd.id); }}
-                    className={`group relative flex flex-col px-3 py-2 cursor-pointer transition-colors ${
-                      isActive
-                        ? 'bg-accent-500/10 border-l-2 border-accent-500'
-                        : 'border-l-2 border-transparent hover:bg-surface-800'
-                    }`}
-                  >
-                    {/* Name row */}
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      {rdChColor && !isRenaming && (
-                        <span
-                          className="flex-shrink-0 w-1.5 h-1.5 rounded-full"
-                          style={{ background: rdChColor }}
-                          title={channels[rdChIdx]?.name}
+              ) : (
+                <DndContext collisionDetection={closestCenter} onDragEnd={handleRundownsDragEnd}>
+                  <SortableContext items={rundowns.map(r => r.id)} strategy={verticalListSortingStrategy}>
+                    {rundowns.map(rd => {
+                      const isActive   = rd.id === activeRundownId;
+                      const onAirCount = onAirCountForRundown(rd);
+                      const isRenaming = renamingId === rd.id;
+                      const rdChIdx    = rd.channelId ? channels.findIndex(c => c.id === rd.channelId) : -1;
+                      const rdChColor  = rdChIdx >= 0 ? CHANNEL_COLORS[rdChIdx % CHANNEL_COLORS.length] : null;
+                      return (
+                        <SortableRundownItem
+                          key={rd.id}
+                          rd={rd}
+                          isActive={isActive}
+                          onAirCount={onAirCount}
+                          isRenaming={isRenaming}
+                          renameVal={renameVal}
+                          rdChColor={rdChColor}
+                          rdChIdx={rdChIdx}
+                          channels={channels}
+                          rundownsLength={rundowns.length}
+                          onActivate={() => setActiveRundownId(rd.id)}
+                          onStartRename={() => { setRenamingId(rd.id); setRenameVal(rd.name); }}
+                          onRenameChange={setRenameVal}
+                          onCommitRename={() => commitRename(rd.id)}
+                          onCancelRename={() => setRenamingId(null)}
+                          onDuplicate={() => duplicateRundown(rd.id)}
+                          onExport={() => exportRundown(rd.id)}
+                          onDelete={() => deleteRundown(rd.id)}
                         />
-                      )}
-                      {isRenaming ? (
-                        <input
-                          autoFocus
-                          value={renameVal}
-                          onChange={(e) => setRenameVal(e.target.value)}
-                          onBlur={() => commitRename(rd.id)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') commitRename(rd.id);
-                            if (e.key === 'Escape') setRenamingId(null);
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          className="flex-1 min-w-0 bg-surface-700 border border-accent-500 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none"
-                        />
-                      ) : (
-                        <span className={`flex-1 text-xs truncate ${isActive ? 'text-white font-medium' : 'text-gray-400'}`}>
-                          {rd.name}
-                        </span>
-                      )}
-                      {onAirCount > 0 && !isRenaming && (
-                        <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" title={`${onAirCount} в эфире`} />
-                      )}
-                    </div>
-
-                    {/* Meta */}
-                    {!isRenaming && (
-                      <span className="text-[10px] text-gray-600 mt-0.5">
-                        {rd.slots.length} {rd.slots.length === 1 ? 'слот' : rd.slots.length < 5 ? 'слота' : 'слотов'}
-                      </span>
-                    )}
-
-                    {/* Action buttons (shown on hover or active) */}
-                    {!isRenaming && (
-                      <div className={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 transition-opacity ${
-                        isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                      }`}>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setRenamingId(rd.id); setRenameVal(rd.name); }}
-                          title="Переименовать"
-                          className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-600 transition-colors"
-                        >
-                          <Pencil size={11} />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); duplicateRundown(rd.id); }}
-                          title="Дублировать"
-                          className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-600 transition-colors"
-                        >
-                          <Copy size={11} />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); exportRundown(rd.id); }}
-                          title="Экспорт JSON"
-                          className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-600 transition-colors"
-                        >
-                          <FileDown size={11} />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); deleteRundown(rd.id); }}
-                          title="Удалить"
-                          disabled={rundowns.length <= 1}
-                          className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-surface-600 disabled:opacity-20 transition-colors"
-                        >
-                          <Trash2 size={11} />
-                        </button>
-                      </div>
-                    )}
-                    {isRenaming && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); commitRename(rd.id); }}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-green-400 hover:bg-surface-600"
-                      >
-                        <Check size={11} />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
+                      );
+                    })}
+                  </SortableContext>
+                </DndContext>
+              )}
             </div>
           </div>
 
