@@ -681,12 +681,18 @@ export function ControlPage() {
     }));
   }, [activeRundownId]);
 
-  // Load rundowns from backend on mount
+  // Load rundowns + restore on-air state on mount
   useEffect(() => {
     setLoadingRundowns(true);
-    fetch('/api/rundowns')
-      .then(r => r.json())
-      .then(async (list: RundownData[]) => {
+    Promise.all([
+      fetch('/api/rundowns').then(r => r.json()),
+      fetch('/api/onair').then(r => r.json()).catch(() => ({})),
+    ])
+      .then(async ([list, onAirData]: [RundownData[], Record<string, string[]>]) => {
+        // Restore on-air IDs from backend state
+        const allIds: string[] = Object.values(onAirData).flat();
+        if (allIds.length > 0) setOnAirSet(new Set(allIds));
+
         if (list.length === 0) {
           // Auto-create first rundown
           const r = await fetch('/api/rundowns', {
@@ -700,6 +706,12 @@ export function ControlPage() {
         } else {
           setRundowns(list);
           setActiveRundownId(list[0].id);
+          // rdOnAirSet: subset of on-air IDs that match slot IDs in any rundown
+          if (allIds.length > 0) {
+            const allSlotIds = new Set(list.flatMap(rd => rd.slots.map(s => s.slotId)));
+            const rdIds = allIds.filter(id => allSlotIds.has(id));
+            if (rdIds.length > 0) setRdOnAirSet(new Set(rdIds));
+          }
         }
       })
       .finally(() => setLoadingRundowns(false));

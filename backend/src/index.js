@@ -81,6 +81,15 @@ app.ws('/ws/control', (ws) => {
   ws.on('close', () => console.log('Control client disconnected'));
 });
 
+// Returns currently on-air template/slot IDs grouped by channel
+app.get('/api/onair', (req, res) => {
+  const result = {};
+  onAirState.forEach((channelMap, channelId) => {
+    if (channelMap.size > 0) result[channelId] = Array.from(channelMap.keys());
+  });
+  res.json(result);
+});
+
 app.use('/api/templates', templateRouter);
 app.use('/api/control',   controlRouter);
 app.use('/api/uploads',   uploadsRouter);
