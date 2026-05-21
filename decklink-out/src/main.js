@@ -1,22 +1,22 @@
 /**
  * main.js — Electron main process
  *
- * Offscreen BrowserWindow 1920×1080 / 25 fps (1080i50),
- * feeds every paint event into the DeckLink addon (Fill+Key SDI output).
+ * Reads display_mode and keyer_mode from /api/settings on startup,
+ * then feeds every paint event into the DeckLink addon.
  */
 
 'use strict';
 
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
+const http = require('http');
+const https = require('https');
 
 // ---------------------------------------------------------------------------
-// GPU / WebGL flags — must be set BEFORE app is ready
-// Hardware GPU path via ANGLE/D3D11 — significantly faster than SwiftShader
-// for scenes with video layers (texture upload goes to GPU instead of CPU).
+// GPU / WebGL flags
 // ---------------------------------------------------------------------------
-app.commandLine.appendSwitch('use-gl', 'angle');                 // hardware GPU via ANGLE
-app.commandLine.appendSwitch('use-angle', 'd3d11');              // D3D11 backend (Windows)
+app.commandLine.appendSwitch('use-gl', 'angle');
+app.commandLine.appendSwitch('use-angle', 'd3d11');
 app.commandLine.appendSwitch('enable-webgl', 'true');
 app.commandLine.appendSwitch('disable-gpu-sandbox');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
@@ -39,35 +39,86 @@ try {
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-const RENDERER_URL = process.env.RENDERER_URL || 'http://localhost:3001/renderer.html';
-const TARGET_FPS   = 25;
-const BACKEND_RETRY_MS = 3000;  // retry loading page if backend not ready yet
+const CHANNEL_ID    = (process.env.CHANNEL_ID || '').trim();
+const BACKEND_URL   = process.env.BACKEND_URL || 'http://localhost:3001';
+const RENDERER_URL  = process.env.RENDERER_URL ||
+  (CHANNEL_ID ? `${BACKEND_URL}/renderer.html?channel=${encodeURIComponent(CHANNEL_ID)}`
+              : `${BACKEND_URL}/renderer.html`);
+const BACKEND_RETRY_MS = 3000;
+
+// Resolution by display mode prefix
+function resolveResolution(displayMode) {
+    if (displayMode && displayMode.startsWith('HD720')) return { w: 1280, h: 720 };
+    return { w: 1920, h: 1080 }; // default: all 1080 formats
+}
+
+// ---------------------------------------------------------------------------
+// Fetch JSON from backend (with fallback)
+// ---------------------------------------------------------------------------
+function fetchJson(url) {
+    return new Promise((resolve) => {
+        const lib = url.startsWith('https') ? https : http;
+        lib.get(url, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try { resolve(JSON.parse(data)); }
+                catch { resolve(null); }
+            });
+        }).on('error', () => resolve(null));
+    });
+}
+
+async function getSettings() {
+    // Try channel-specific settings first
+    if (CHANNEL_ID) {
+        const ch = await fetchJson(`${BACKEND_URL}/api/channels/${CHANNEL_ID}`);
+        if (ch && !ch.error) {
+            console.log(`[DeckLink] Using channel settings for "${ch.name}"`);
+            return {
+                display_mode: ch.display_mode || 'HD1080i50',
+                keyer_mode:   ch.keyer_mode   || 'external',
+                device_index: ch.device_index  ?? 0,
+            };
+        }
+        console.warn(`[DeckLink] Channel ${CHANNEL_ID} not found — falling back to global settings`);
+    }
+    // Fallback to global settings
+    const data = await fetchJson(`${BACKEND_URL}/api/settings`);
+    return {
+        display_mode: data?.display_mode || 'HD1080i50',
+        keyer_mode:   data?.keyer_mode   || 'external',
+        device_index: data?.device_index  ?? 0,
+    };
+}
 
 // ---------------------------------------------------------------------------
 // Window + output lifecycle
 // ---------------------------------------------------------------------------
-let win         = null;
-let outputOpen  = false;
-let paintCount  = 0;
+let win        = null;
+let outputOpen = false;
+let paintCount = 0;
 let lastPaintLog = 0;
 
-function openDeckLink() {
+function openDeckLink(deviceIndex, displayMode, keyerMode) {
     try {
-        decklink.open();
+        decklink.open(deviceIndex, displayMode, keyerMode);
         outputOpen = true;
-        console.log('[DeckLink] Output started (1080i50, Fill+Key)');
+        console.log(`[DeckLink] Output started — sub-device=${deviceIndex}  mode=${displayMode}  keyer=${keyerMode}`);
     } catch (err) {
         console.error('[DeckLink] open() failed:', err.message);
     }
 }
 
-function createWindow() {
+function createWindow(displayMode) {
+    const { w, h } = resolveResolution(displayMode);
+
     win = new BrowserWindow({
-        width:           1920,
-        height:          1080,
+        width:           w,
+        height:          h,
         show:            false,
-        transparent:     true,          // allow alpha channel through to offscreen bitmap
-        backgroundColor: '#00000000',  // fully transparent default background
+        transparent:     true,
+        backgroundColor: '#00000000',
         webPreferences: {
             offscreen:            true,
             backgroundThrottling: false,
@@ -76,41 +127,59 @@ function createWindow() {
         }
     });
 
-    win.webContents.setFrameRate(TARGET_FPS);
+    // Derive target FPS from display mode string
+    let fps = 25;
+    if (displayMode) {
+        if (displayMode.includes('p50') || displayMode.includes('i50')) fps = 50;
+        else if (displayMode.includes('5994') || displayMode.includes('p5994')) fps = 60;
+        else if (displayMode.includes('p6000') || displayMode.includes('i6000') || displayMode.includes('p60')) fps = 60;
+        else if (displayMode.includes('p2997') || displayMode.includes('i5994')) fps = 30;
+        else if (displayMode.includes('p30') || displayMode.includes('i6000')) fps = 30;
+        else if (displayMode.includes('p25') || displayMode.includes('i50'))   fps = 25;
+        else if (displayMode.includes('p2398')) fps = 24;
+        else if (displayMode.includes('p24'))   fps = 24;
+    }
+    win.webContents.setFrameRate(fps);
 
-    // ---- Page load success ----
     win.webContents.on('did-finish-load', () => {
         console.log('[DeckLink] Page loaded:', RENDERER_URL);
-        if (!outputOpen) openDeckLink();
     });
 
-    // ---- Page load failed (backend not ready yet?) — retry ----
-    win.webContents.on('did-fail-load', (evt, code, desc, url) => {
+    win.webContents.on('did-fail-load', (evt, code, desc) => {
         console.warn(`[DeckLink] Page load failed (${code} ${desc}) — retry in ${BACKEND_RETRY_MS}ms`);
         setTimeout(() => {
             if (win && !win.isDestroyed()) win.loadURL(RENDERER_URL);
         }, BACKEND_RETRY_MS);
     });
 
-    // ---- Console messages from renderer (useful for PIXI init errors) ----
     win.webContents.on('console-message', (evt, level, msg) => {
         const prefix = ['[renderer:log]', '[renderer:warn]', '[renderer:error]', '[renderer:debug]'][level] || '[renderer]';
-        console.log(prefix, msg);
+        // Only log warnings and errors to reduce noise; log WS status always
+        if (level >= 1 || msg.includes('[Renderer]') || msg.includes('WS') || msg.includes('channel')) {
+            console.log(prefix, msg);
+        }
     });
 
-    // ---- Paint → DeckLink ----
+    let firstPaint = true;
     win.webContents.on('paint', (event, _dirty, image) => {
         if (!outputOpen) return;
+
+        if (firstPaint) {
+            firstPaint = false;
+            console.log('[DeckLink] First paint received — frames flowing to DeckLink output');
+        }
+
         try {
             decklink.scheduleFrame(image.getBitmap());
-        } catch (_) {}
+        } catch (err) {
+            console.error('[DeckLink] scheduleFrame error:', err.message);
+        }
 
-        // Log frame rate every 5 seconds for diagnostics
         paintCount++;
         const now = Date.now();
         if (now - lastPaintLog >= 5000) {
             const fps = (paintCount / ((now - lastPaintLog || 5000) * 0.001)).toFixed(1);
-            console.log(`[DeckLink] Sending frames: ~${fps} fps (total ${paintCount})`);
+            console.log(`[DeckLink] Sending frames: ~${fps} fps`);
             paintCount  = 0;
             lastPaintLog = now;
         }
@@ -122,9 +191,14 @@ function createWindow() {
 // ---------------------------------------------------------------------------
 // Electron lifecycle
 // ---------------------------------------------------------------------------
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     lastPaintLog = Date.now();
-    createWindow();
+
+    const settings = await getSettings();
+    console.log(`[DeckLink] Settings: mode=${settings.display_mode}  keyer=${settings.keyer_mode}`);
+
+    openDeckLink(settings.device_index, settings.display_mode, settings.keyer_mode);
+    createWindow(settings.display_mode);
 });
 
 app.on('window-all-closed', shutdown);

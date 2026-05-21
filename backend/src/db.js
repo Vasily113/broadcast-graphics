@@ -8,7 +8,12 @@ const DB_PATH = join(__dirname, '../../data/db.json');
 let db;
 
 export async function initDb() {
-  db = await JSONFilePreset(DB_PATH, { templates: [], rundowns: [] });
+  db = await JSONFilePreset(DB_PATH, {
+    templates: [],
+    rundowns: [],
+    settings: { display_mode: 'HD1080i50', keyer_mode: 'external', device_index: 0 },
+    channels: [],
+  });
   console.log('Database initialized:', DB_PATH);
 }
 

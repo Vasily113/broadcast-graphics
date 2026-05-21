@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Tv, RefreshCw, ChevronDown, ChevronRight, Zap,
   GripVertical, Plus, X, SkipBack, SkipForward, Square, List, Layers, Monitor, Upload,
-  FileDown, FileUp, Copy, Pencil, Trash2, Check,
+  FileDown, FileUp, Copy, Pencil, Trash2, Check, Settings,
 } from 'lucide-react';
+import { CHANNEL_COLORS } from './SettingsPage';
 import { DndContext, DragEndEvent, closestCenter } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -12,16 +13,72 @@ import { Template, Variable } from '../core/schema';
 import { TemplateThumbnail } from '../features/templates/TemplateThumbnail';
 
 type Command =
-  | { type: 'take'; templateId: string; template: Template; variables: Record<string, string> }
-  | { type: 'clear'; templateId: string }
-  | { type: 'update'; templateId: string; variables: Record<string, string> };
+  | { type: 'take';   templateId: string; template: Template; variables: Record<string, string>; channelId?: string }
+  | { type: 'clear';  templateId: string; channelId?: string }
+  | { type: 'update'; templateId: string; variables: Record<string, string>; channelId?: string };
+
+interface Channel { id: string; name: string; device_index: number; display_mode: string; keyer_mode: string; }
 
 type WsStatus = 'connecting' | 'connected' | 'disconnected';
 
 interface TemplateListItem { id: string; name: string; updated_at: number; }
 interface FullTemplate extends TemplateListItem { data: Template; }
 interface RundownSlot { slotId: string; templateId: string; name: string; vars: Record<string, string>; }
-interface RundownData { id: string; name: string; slots: RundownSlot[]; created_at: number; updated_at: number; }
+interface RundownData { id: string; name: string; slots: RundownSlot[]; channelId: string | null; created_at: number; updated_at: number; }
+
+// ── Channel badge / selector ──────────────────────────────────────────────────
+
+function ChannelBadge({
+  channels, value, onChange,
+}: { channels: Channel[]; value: string | null; onChange: (id: string | null) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const idx  = channels.findIndex(c => c.id === value);
+  const ch   = idx >= 0 ? channels[idx] : null;
+  const color = ch ? CHANNEL_COLORS[idx % CHANNEL_COLORS.length] : '#4b5563';
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs bg-surface-700 hover:bg-surface-600 transition-colors"
+      >
+        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
+        <span className="text-white">{ch?.name ?? 'Нет канала'}</span>
+        <ChevronDown size={10} className="text-gray-400" />
+      </button>
+      {open && (
+        <div className="absolute top-full mt-1 left-0 bg-surface-800 border border-surface-600 rounded-lg shadow-xl z-50 min-w-[180px]">
+          <button
+            onClick={() => { onChange(null); setOpen(false); }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-400 hover:bg-surface-700 transition-colors"
+          >
+            <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" />
+            Нет канала
+          </button>
+          {channels.map((c, i) => (
+            <button
+              key={c.id}
+              onClick={() => { onChange(c.id); setOpen(false); }}
+              className={`w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-surface-700 transition-colors ${c.id === value ? 'text-white' : 'text-gray-300'}`}
+            >
+              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: CHANNEL_COLORS[i % CHANNEL_COLORS.length] }} />
+              {c.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Video variable field (upload + URL in Control panel) ─────────────────────
 
@@ -414,6 +471,8 @@ export function ControlPage() {
   const [templates, setTemplates] = useState<TemplateListItem[]>([]);
   const [onAirSet, setOnAirSet] = useState<Set<string>>(new Set());
   const [fullCache, setFullCache] = useState<Record<string, FullTemplate>>({});
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [tmplChannelId, setTmplChannelId] = useState<string | null>(null);
   const { status, send, reconnect } = useControlWs();
 
   // ── Preview panel ───────────────────────────────────────────────────────
@@ -466,21 +525,28 @@ export function ControlPage() {
     const r = await fetch(`/api/templates/${id}`);
     const fresh = await r.json();
     setFullCache((s) => ({ ...s, [id]: fresh }));
-    send({ type: 'take', templateId: id, template: fresh.data, variables: vars });
+    send({ type: 'take', templateId: id, template: fresh.data, variables: vars, channelId: tmplChannelId ?? undefined });
     setOnAirSet((s) => new Set(s).add(id));
-  }, [send]);
+  }, [send, tmplChannelId]);
 
   const handleClear = useCallback((id: string) => {
-    send({ type: 'clear', templateId: id });
+    send({ type: 'clear', templateId: id, channelId: tmplChannelId ?? undefined });
     setOnAirSet((s) => { const n = new Set(s); n.delete(id); return n; });
-  }, [send]);
+  }, [send, tmplChannelId]);
 
   const handleUpdate = useCallback((id: string, vars: Record<string, string>) => {
-    send({ type: 'update', templateId: id, variables: vars });
-  }, [send]);
+    send({ type: 'update', templateId: id, variables: vars, channelId: tmplChannelId ?? undefined });
+  }, [send, tmplChannelId]);
 
   useEffect(() => {
     fetch('/api/templates').then((r) => r.json()).then(setTemplates);
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/channels').then(r => r.json()).then((list: Channel[]) => {
+      setChannels(list);
+      if (list.length > 0) setTmplChannelId(prev => prev ?? list[0].id);
+    });
   }, []);
 
   // ── Rundown management state ────────────────────────────────────────────
@@ -700,9 +766,18 @@ export function ControlPage() {
         vars[v.id] = slot.vars[v.id] ?? String(v.defaultValue ?? '');
       });
       vars[varId] = value;
-      send({ type: 'update', templateId: slotId, variables: vars });
+      send({ type: 'update', templateId: slotId, variables: vars, channelId: activeRundown?.channelId ?? undefined });
     }, 300);
-  }, [rundown, rdOnAirSet, fullCache, send, setRundown]);
+  }, [rundown, rdOnAirSet, fullCache, send, setRundown, activeRundown]);
+
+  const setRundownChannel = useCallback((id: string, channelId: string | null) => {
+    setRundowns(prev => prev.map(r => r.id === id ? { ...r, channelId } : r));
+    fetch(`/api/rundowns/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channelId }),
+    });
+  }, []);
 
   const rdTakeAt = useCallback(async (index: number) => {
     if (index < 0 || index >= rundown.length) return;
@@ -714,16 +789,18 @@ export function ControlPage() {
     (full.data?.variables ?? []).forEach((v: Variable) => {
       vars[v.id] = slot.vars[v.id] ?? String(v.defaultValue ?? '');
     });
-    send({ type: 'take', templateId: slot.slotId, template: full.data, variables: vars });
+    const channelId = activeRundown?.channelId ?? undefined;
+    send({ type: 'take', templateId: slot.slotId, template: full.data, variables: vars, channelId });
     setOnAirSet((s) => new Set(s).add(slot.slotId));
     setRdOnAirSet((s) => new Set(s).add(slot.slotId));
-  }, [rundown, send]);
+  }, [rundown, send, activeRundown]);
 
   const rdClearSlot = useCallback((slotId: string) => {
-    send({ type: 'clear', templateId: slotId });
+    const channelId = activeRundown?.channelId ?? undefined;
+    send({ type: 'clear', templateId: slotId, channelId });
     setOnAirSet((s) => { const n = new Set(s); n.delete(slotId); return n; });
     setRdOnAirSet((s) => { const n = new Set(s); n.delete(slotId); return n; });
-  }, [send]);
+  }, [send, activeRundown]);
 
   // Keyboard navigation for rundown tab
   useEffect(() => {
@@ -755,12 +832,13 @@ export function ControlPage() {
   }, [tab, rundown, rdFocusIdx, rdTakeAt, rdOnAirSet, rdClearSlot]);
 
   const rdClearAll = useCallback(() => {
+    const channelId = activeRundown?.channelId ?? undefined;
     rdOnAirSet.forEach((slotId) => {
-      send({ type: 'clear', templateId: slotId });
+      send({ type: 'clear', templateId: slotId, channelId });
       setOnAirSet((s) => { const n = new Set(s); n.delete(slotId); return n; });
     });
     setRdOnAirSet(new Set());
-  }, [rdOnAirSet, send]);
+  }, [rdOnAirSet, send, activeRundown]);
 
   // Auto-preview focused rundown slot
   useEffect(() => {
@@ -862,6 +940,9 @@ export function ControlPage() {
           </span>
         )}
         <div className="flex-1" />
+        <button onClick={() => navigate('/settings')} className="p-1.5 hover:bg-surface-700 rounded text-gray-500 hover:text-white" title="Настройки каналов">
+          <Settings size={15} />
+        </button>
         <WsStatusBadge status={status} onReconnect={reconnect} />
       </div>
 
@@ -907,6 +988,9 @@ export function ControlPage() {
               <span>убрать</span>
             </span>
             <div className="flex-1" />
+            {channels.length > 0 && (
+              <ChannelBadge channels={channels} value={tmplChannelId} onChange={setTmplChannelId} />
+            )}
             {onAirSet.size > 0 && (
               <>
                 <span className="text-xs text-gray-400">{onAirSet.size} в эфире</span>
@@ -992,6 +1076,8 @@ export function ControlPage() {
                 const isActive = rd.id === activeRundownId;
                 const onAirCount = onAirCountForRundown(rd);
                 const isRenaming = renamingId === rd.id;
+                const rdChIdx = rd.channelId ? channels.findIndex(c => c.id === rd.channelId) : -1;
+                const rdChColor = rdChIdx >= 0 ? CHANNEL_COLORS[rdChIdx % CHANNEL_COLORS.length] : null;
 
                 return (
                   <div
@@ -1005,6 +1091,13 @@ export function ControlPage() {
                   >
                     {/* Name row */}
                     <div className="flex items-center gap-1.5 min-w-0">
+                      {rdChColor && !isRenaming && (
+                        <span
+                          className="flex-shrink-0 w-1.5 h-1.5 rounded-full"
+                          style={{ background: rdChColor }}
+                          title={channels[rdChIdx]?.name}
+                        />
+                      )}
                       {isRenaming ? (
                         <input
                           autoFocus
@@ -1120,10 +1213,17 @@ export function ControlPage() {
                 <Square size={12} /> CLEAR ALL
               </button>
 
-              {/* Active rundown name */}
+              {/* Active rundown name + channel */}
               <span className="text-xs text-gray-500 truncate hidden sm:block">
                 {activeRundown?.name ?? ''}
               </span>
+              {channels.length > 0 && activeRundown && (
+                <ChannelBadge
+                  channels={channels}
+                  value={activeRundown.channelId}
+                  onChange={(id) => setRundownChannel(activeRundown.id, id)}
+                />
+              )}
 
               <div className="flex-1" />
               <span className="text-xs text-gray-600 select-none hidden sm:flex items-center gap-2">
