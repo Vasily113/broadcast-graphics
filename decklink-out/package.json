@@ -5,7 +5,7 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "build-addon": "cd addon && node node-gyp rebuild --arch=x64 --target=28.3.3 --dist-url=https://electronjs.org/headers"
+    "build-addon": "cd addon && ../node_modules/.bin/node-gyp rebuild --arch=x64 --target=28.3.3 --dist-url=https://electronjs.org/headers"
   },
   "dependencies": {
     "node-addon-api": "^7.1.0"

@@ -51,8 +51,20 @@ typedef enum _BMDOutputFrameCompletionResult {
 // Constants used by decklink.cpp
 // (from DeckLinkAPIModes.idl and DeckLinkAPI.idl)
 // ---------------------------------------------------------------------------
-static const BMDDisplayMode              bmdModeHD1080p50              = 0x48703530u; // 'Hp50'
 static const BMDDisplayMode              bmdModeHD1080i50              = 0x48693530u; // 'Hi50'
+static const BMDDisplayMode              bmdModeHD1080i5994            = 0x48693539u; // 'Hi59'
+static const BMDDisplayMode              bmdModeHD1080i6000            = 0x48693630u; // 'Hi60'
+static const BMDDisplayMode              bmdModeHD1080p2398            = 0x32337073u; // '23ps'
+static const BMDDisplayMode              bmdModeHD1080p24              = 0x32347073u; // '24ps'
+static const BMDDisplayMode              bmdModeHD1080p25              = 0x48703235u; // 'Hp25'
+static const BMDDisplayMode              bmdModeHD1080p2997            = 0x48703239u; // 'Hp29'
+static const BMDDisplayMode              bmdModeHD1080p30              = 0x48703330u; // 'Hp30'
+static const BMDDisplayMode              bmdModeHD1080p50              = 0x48703530u; // 'Hp50'
+static const BMDDisplayMode              bmdModeHD1080p5994            = 0x48703539u; // 'Hp59'
+static const BMDDisplayMode              bmdModeHD1080p6000            = 0x48703630u; // 'Hp60'
+static const BMDDisplayMode              bmdModeHD720p50               = 0x68703530u; // 'hp50'
+static const BMDDisplayMode              bmdModeHD720p5994             = 0x68703539u; // 'hp59'
+static const BMDDisplayMode              bmdModeHD720p60               = 0x68703630u; // 'hp60'
 static const BMDPixelFormat              bmdFormat8BitARGB             = 32u;
 static const BMDPixelFormat              bmdFormat8BitBGRA             = 0x42475241u; // 'BGRA'
 static const BMDVideoOutputFlags         bmdVideoOutputFlagDefault     = 0u;

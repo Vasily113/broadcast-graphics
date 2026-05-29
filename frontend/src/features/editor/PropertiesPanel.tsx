@@ -1,21 +1,60 @@
-import { useRef, useState } from 'react';
-import { Upload } from 'lucide-react';
+﻿import { useRef, useState } from 'react';
+import { Diamond, Upload } from 'lucide-react';
 import { useEditorStore } from '../../core/store';
-import { TextLayer, RectLayer, ImageLayer, ClockLayer, VideoLayer, VariableBinding, Variable } from '../../core/schema';
+import { NumericInput } from './NumericInput';
+import {
+  findKeyframeAtFrame,
+  getGroupLocalTransformAtFrame,
+  getGroupWorldTransformAtFrame,
+  getLayerLocalTransformAtFrame,
+  getLayerWorldTransformAtFrame,
+} from '../../core/timeline';
+import { TextLayer, RectLayer, ImageLayer, ClockLayer, VideoLayer, VariableBinding, Variable, PositionSizeProp } from '../../core/schema';
 
-// ── Primitive inputs ────────────────────────────────────────────────────────
+// в”Ђв”Ђ Primitive inputs в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-function NumInput({ value, onChange, min, max, step = 1 }: {
-  value: number; onChange: (v: number) => void; min?: number; max?: number; step?: number;
+function NumInput({ value, onChange, min, max, step = 1, wide = false }: {
+  value: number; onChange: (v: number) => void; min?: number; max?: number; step?: number; wide?: boolean;
 }) {
   return (
-    <input
-      type="number"
+    <NumericInput
       value={value}
       min={min} max={max} step={step}
-      onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-      className="flex-1 min-w-0 bg-surface-700 border border-surface-600 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none focus:border-accent-500"
+      onChange={onChange}
+      className={`${wide ? 'w-full' : 'flex-1 min-w-0'} bg-surface-700 border border-surface-600 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none focus:border-accent-500 cursor-ew-resize`}
     />
+  );
+}
+
+function KeyButton({ active, onClick }: { active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`p-1 rounded flex-shrink-0 ${
+        active
+          ? 'text-amber-300 bg-amber-500/15 hover:bg-amber-500/25'
+          : 'text-gray-600 hover:text-amber-300 hover:bg-surface-700'
+      }`}
+      title="Создать ключ для этого параметра"
+    >
+      <Diamond size={11} className={active ? 'fill-amber-300' : ''} />
+    </button>
+  );
+}
+
+function ScaleLockButton({ locked, onToggle }: { locked: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={`absolute left-3 top-[27px] text-[10px] leading-none font-semibold tracking-wide ${
+        locked ? 'text-gray-300' : 'text-gray-600 hover:text-gray-300'
+      }`}
+      title={locked ? 'Scale X и Scale Y связаны' : 'Scale X и Scale Y изменяются отдельно'}
+    >
+      LOCK
+    </button>
   );
 }
 
@@ -52,7 +91,7 @@ function BindableField({ value, varFilter, onChange, placeholder = '' }: {
     return (
       <div className="flex items-center gap-1 flex-1 min-w-0">
         <div className="flex-1 min-w-0 flex items-center gap-1 bg-accent-500/20 border border-accent-500/40 rounded px-1.5 py-0.5">
-          <span className="text-accent-400 text-xs truncate">⚡ {name}</span>
+          <span className="text-accent-400 text-xs truncate">вљЎ {name}</span>
         </div>
         <button onClick={() => onChange('')} className="text-gray-500 hover:text-white text-xs px-1 flex-shrink-0" title="Отвязать">✕</button>
       </div>
@@ -95,7 +134,7 @@ function ColorBindableField({ value, vars, onChange }: {
     return (
       <div className="flex items-center gap-1 flex-1 min-w-0">
         <div className="flex-1 min-w-0 flex items-center gap-1 bg-accent-500/20 border border-accent-500/40 rounded px-1.5 py-0.5">
-          <span className="text-accent-400 text-xs truncate">⚡ {name}</span>
+          <span className="text-accent-400 text-xs truncate">вљЎ {name}</span>
         </div>
         <button onClick={() => onChange('#ffffff')} className="text-gray-500 hover:text-white text-xs px-1 flex-shrink-0" title="Отвязать">✕</button>
       </div>
@@ -122,7 +161,7 @@ function ColorBindableField({ value, vars, onChange }: {
   );
 }
 
-// ── Layout helpers ──────────────────────────────────────────────────────────
+// в”Ђв”Ђ Layout helpers в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -143,7 +182,7 @@ function Lbl({ children }: { children: React.ReactNode }) {
   return <span className="text-gray-500 text-xs w-14 flex-shrink-0">{children}</span>;
 }
 
-// ── Font input ───────────────────────────────────────────────────────────────
+// в”Ђв”Ђ Font input в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 const POPULAR_FONTS = [
   'Arial', 'Helvetica', 'Verdana', 'Trebuchet MS', 'Georgia', 'Times New Roman',
@@ -186,7 +225,7 @@ function FontInput({ value, onChange }: { value: string; onChange: (v: string) =
   );
 }
 
-// ── Image upload ─────────────────────────────────────────────────────────────
+// в”Ђв”Ђ Image upload в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 function ImageUploadRow({ value, variables, onChange }: {
   value: string | VariableBinding;
@@ -298,9 +337,9 @@ function ImageUploadRow({ value, variables, onChange }: {
   );
 }
 
-// ── Video upload ─────────────────────────────────────────────────────────────
+// в”Ђв”Ђ Video upload в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-function VideoUploadRow({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function VideoUploadRow({ value, onChange }: { value: string | VariableBinding; onChange: (v: string | VariableBinding) => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
@@ -329,7 +368,7 @@ function VideoUploadRow({ value, onChange }: { value: string; onChange: (v: stri
       >
         {uploading ? 'Загрузка...' : '↑ Выбрать .webm'}
       </button>
-      {value && (
+      {typeof value === 'string' && value && (
         <span className="text-xs text-green-400 truncate flex-1" title={value}>✓ {value.split('/').pop()}</span>
       )}
       <input
@@ -343,19 +382,145 @@ function VideoUploadRow({ value, onChange }: { value: string; onChange: (v: stri
   );
 }
 
-// ── Main component ──────────────────────────────────────────────────────────
+// в”Ђв”Ђ Main component в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 export function PropertiesPanel() {
-  const { template, selectedLayerIds, updateLayer, updateCanvas } = useEditorStore();
+  const [scaleLockByTarget, setScaleLockByTarget] = useState<Record<string, boolean>>({});
+  const {
+    template,
+    selectedLayerIds,
+    selectedGroupIds,
+    transformSpace,
+    setTransformSpace,
+    updateLayer,
+    updateCanvas,
+    updateLayerTransform,
+    updateGroup,
+    updateGroupTransform,
+    addTimelineKeyframeAtPlayhead,
+    timelinePlayhead,
+    timelineDirectorPlayheads,
+    selectedTimelineKeyframeId,
+    selectedTimelineActionId,
+    updateTimelineAction,
+  } = useEditorStore();
 
-  const layer = selectedLayerIds.length === 1
+  const timeline = template.timeline;
+  const selectedAction = selectedTimelineActionId
+    ? timeline.actions.find((action) => action.id === selectedTimelineActionId)
+    : null;
+  const baseLayer = selectedLayerIds.length === 1
     ? template.layers.find((l) => l.id === selectedLayerIds[0])
     : null;
+  const baseGroup = selectedGroupIds.length === 1
+    ? (template.groups ?? []).find((g) => g.id === selectedGroupIds[0])
+    : null;
 
-  const upd = (patch: object) => layer && updateLayer(layer.id, patch as any);
-  const updT = (patch: object) => layer && upd({ transform: { ...layer.transform, ...patch } });
+  const keyAtPlayhead = findKeyframeAtFrame(timeline, timelinePlayhead);
+  const editingKeyframe =
+    selectedTimelineKeyframeId && keyAtPlayhead?.id === selectedTimelineKeyframeId;
 
-  // ── Multiselect panel ────────────────────────────────────────────────────
+  const layerLocal = baseLayer
+    ? getLayerLocalTransformAtFrame(baseLayer, timeline, timelineDirectorPlayheads)
+    : null;
+  const layerWorld = baseLayer
+    ? getLayerWorldTransformAtFrame(baseLayer, template, timelineDirectorPlayheads)
+    : null;
+  const layerT = transformSpace === 'world' ? layerWorld : layerLocal;
+
+  const groupLocal = baseGroup
+    ? getGroupLocalTransformAtFrame(baseGroup, timeline, timelineDirectorPlayheads)
+    : null;
+  const groupWorld = baseGroup
+    ? getGroupWorldTransformAtFrame(baseGroup, template, timelineDirectorPlayheads)
+    : null;
+  const groupT = transformSpace === 'world' ? groupWorld : groupLocal;
+  const scaleLockKey = baseLayer
+    ? `layer:${baseLayer.id}`
+    : baseGroup
+      ? `group:${baseGroup.id}`
+      : null;
+  const scaleLocked = scaleLockKey ? scaleLockByTarget[scaleLockKey] ?? true : true;
+  const toggleScaleLock = () => {
+    if (!scaleLockKey) return;
+    setScaleLockByTarget((prev) => ({
+      ...prev,
+      [scaleLockKey]: !(prev[scaleLockKey] ?? true),
+    }));
+  };
+
+  const upd = (patch: object) => baseLayer && updateLayer(baseLayer.id, patch as any);
+  const updT = (patch: object) => baseLayer && updateLayerTransform(baseLayer.id, patch as any);
+  const updGT = (patch: object) => baseGroup && updateGroupTransform(baseGroup.id, patch as any);
+  const scalePropsForKey = (prop: PositionSizeProp): PositionSizeProp[] =>
+    scaleLocked && (prop === 'scaleX' || prop === 'scaleY') ? ['scaleX', 'scaleY'] : [prop];
+
+  const addLayerPropKey = (prop: PositionSizeProp) =>
+    baseLayer && addTimelineKeyframeAtPlayhead({ kind: 'layer', targetId: baseLayer.id, props: scalePropsForKey(prop) });
+  const addGroupPropKey = (prop: PositionSizeProp) =>
+    baseGroup && addTimelineKeyframeAtPlayhead({ kind: 'group', targetId: baseGroup.id, props: scalePropsForKey(prop) });
+  const updLayerScaleX = (v: number) => updT(scaleLocked ? { scaleX: v, scaleY: v } : { scaleX: v });
+  const updLayerScaleY = (v: number) => updT(scaleLocked ? { scaleX: v, scaleY: v } : { scaleY: v });
+  const updGroupScaleX = (v: number) => updGT(scaleLocked ? { scaleX: v, scaleY: v } : { scaleX: v });
+  const updGroupScaleY = (v: number) => updGT(scaleLocked ? { scaleX: v, scaleY: v } : { scaleY: v });
+
+  if (selectedAction) {
+    return (
+      <div className="flex-1 overflow-y-auto text-white">
+        <div className="px-3 py-2 border-b border-surface-700 text-xs font-medium text-gray-400 uppercase tracking-wide">
+          Action
+        </div>
+        <Section title="Action">
+          <Row>
+            <Lbl>Команда</Lbl>
+            <select
+              value={selectedAction.command}
+              onChange={(e) => updateTimelineAction(selectedAction.id, { command: e.target.value as typeof selectedAction.command })}
+              className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-0.5 text-xs text-white min-w-0"
+            >
+              <option value="startDirector">Запустить директор</option>
+              <option value="stopDirector">Остановить директор</option>
+            </select>
+          </Row>
+          <Row>
+            <Lbl>Параметр</Lbl>
+            <select
+              value={selectedAction.targetDirectorId ?? ''}
+              onChange={(e) => updateTimelineAction(selectedAction.id, { targetDirectorId: e.target.value || null })}
+              className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-0.5 text-xs text-white min-w-0"
+            >
+              <option value="">Выберите director</option>
+              {timeline.directors.map((director) => (
+                <option key={director.id} value={director.id}>
+                  {director.name}
+                </option>
+              ))}
+            </select>
+          </Row>
+        </Section>
+      </div>
+    );
+  }
+
+  const TransformSpaceToggle = () => (
+    <Row>
+      <Lbl>Коорд.</Lbl>
+      <div className="flex gap-1 flex-1">
+        {(['local', 'world'] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => setTransformSpace(mode)}
+            className={`flex-1 py-0.5 rounded text-xs ${transformSpace === mode ? 'bg-accent-500 text-white' : 'bg-surface-700 text-gray-400'}`}
+          >
+            {mode === 'local' ? 'Относит.' : 'Абсолют.'}
+          </button>
+        ))}
+      </div>
+    </Row>
+  );
+
+  // в”Ђв”Ђ Multiselect panel в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
   if (selectedLayerIds.length > 1) {
     const selected = template.layers.filter((l) => selectedLayerIds.includes(l.id));
     const minX = Math.min(...selected.map((l) => l.transform.x));
@@ -376,14 +541,16 @@ export function PropertiesPanel() {
     return (
       <div className="flex-1 overflow-y-auto text-white">
         <div className="px-3 py-2 border-b border-surface-700 text-xs font-medium text-gray-400 uppercase tracking-wide">
-          {selectedLayerIds.length} слоёв
+          {selectedLayerIds.length} СЃР»РѕС‘РІ
         </div>
         <Section title="Положение группы">
           <Row>
             <Lbl>X</Lbl>
-            <NumInput value={minX} onChange={(v) => setGroupPos(v, minY)} />
+            <NumInput value={minX} onChange={(v) => setGroupPos(v, minY)} wide />
+          </Row>
+          <Row>
             <Lbl>Y</Lbl>
-            <NumInput value={minY} onChange={(v) => setGroupPos(minX, v)} />
+            <NumInput value={minY} onChange={(v) => setGroupPos(minX, v)} wide />
           </Row>
           <Row>
             <Lbl>Прозр.</Lbl>
@@ -391,6 +558,7 @@ export function PropertiesPanel() {
               value={sharedOpacity ?? 100}
               min={0} max={100}
               onChange={setAllOpacity}
+              wide
             />
             {sharedOpacity === null && <span className="text-xs text-gray-500 ml-1">mixed</span>}
           </Row>
@@ -399,8 +567,79 @@ export function PropertiesPanel() {
     );
   }
 
-  // ── Canvas properties (nothing selected) ────────────────────────────────
-  if (!layer) {
+  // в”Ђв”Ђ Group properties в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+  if (baseGroup && !baseLayer) {
+    const t = groupT!;
+    const groupKeyAtPlayhead = keyAtPlayhead?.groups[baseGroup.id];
+    return (
+      <div className="flex-1 overflow-y-auto text-white">
+        <div className="px-3 py-2 border-b border-surface-700 text-xs font-medium text-gray-400 uppercase tracking-wide">
+          Группа
+        </div>
+        <Section title="Имя">
+          <Row>
+            <Lbl>Название</Lbl>
+            <input
+              type="text"
+              value={baseGroup.name}
+              onChange={(e) => updateGroup(baseGroup.id, { name: e.target.value })}
+              className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-0.5 text-xs text-white min-w-0"
+            />
+          </Row>
+        </Section>
+        <Section title="Позиция и размер">
+          {editingKeyframe && (
+            <p className="text-[10px] text-amber-400/90 mb-1.5">Ключ — кадр {timelinePlayhead}</p>
+          )}
+          {!editingKeyframe && groupKeyAtPlayhead && (
+            <p className="text-[10px] text-amber-400/70 mb-1.5">Значения кадра {timelinePlayhead} (ключ на таймлайне)</p>
+          )}
+          <TransformSpaceToggle />
+          <Row>
+            <Lbl>X</Lbl>
+            <NumInput value={Math.round(t.x)} onChange={(v) => updGT({ x: v })} wide />
+            <KeyButton active={groupKeyAtPlayhead?.x !== undefined} onClick={() => addGroupPropKey('x')} />
+          </Row>
+          <Row>
+            <Lbl>Y</Lbl>
+            <NumInput value={Math.round(t.y)} onChange={(v) => updGT({ y: v })} wide />
+            <KeyButton active={groupKeyAtPlayhead?.y !== undefined} onClick={() => addGroupPropKey('y')} />
+          </Row>
+          <Row>
+            <Lbl>Ш</Lbl>
+            <NumInput value={Math.round(t.width)} min={0} onChange={(v) => updGT({ width: v })} wide />
+            <KeyButton active={groupKeyAtPlayhead?.width !== undefined} onClick={() => addGroupPropKey('width')} />
+          </Row>
+          <Row>
+            <Lbl>В</Lbl>
+            <NumInput value={Math.round(t.height)} min={0} onChange={(v) => updGT({ height: v })} wide />
+            <KeyButton active={groupKeyAtPlayhead?.height !== undefined} onClick={() => addGroupPropKey('height')} />
+          </Row>
+          <Row>
+            <Lbl>Угол°</Lbl>
+            <NumInput value={Math.round(t.rotation)} onChange={(v) => updGT({ rotation: v })} wide />
+            <KeyButton active={groupKeyAtPlayhead?.rotation !== undefined} onClick={() => addGroupPropKey('rotation')} />
+          </Row>
+          <div className="relative">
+            <ScaleLockButton locked={scaleLocked} onToggle={toggleScaleLock} />
+            <Row>
+              <Lbl>Scale X</Lbl>
+              <NumInput value={t.scaleX} min={0.01} step={0.05} onChange={updGroupScaleX} wide />
+              <KeyButton active={groupKeyAtPlayhead?.scaleX !== undefined} onClick={() => addGroupPropKey('scaleX')} />
+            </Row>
+            <Row>
+              <Lbl>Scale Y</Lbl>
+              <NumInput value={t.scaleY} min={0.01} step={0.05} onChange={updGroupScaleY} wide />
+              <KeyButton active={groupKeyAtPlayhead?.scaleY !== undefined} onClick={() => addGroupPropKey('scaleY')} />
+            </Row>
+          </div>
+        </Section>
+      </div>
+    );
+  }
+
+  // в”Ђв”Ђ Canvas properties (nothing selected) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+  if (!baseLayer) {
     return (
       <div className="flex-1 overflow-y-auto text-white">
         <div className="px-3 py-2 border-b border-surface-700 text-xs font-medium text-gray-400 uppercase tracking-wide">
@@ -470,13 +709,14 @@ export function PropertiesPanel() {
     );
   }
 
-  const t = layer.transform;
+  const t = layerT!;
+  const layerKeyAtPlayhead = keyAtPlayhead?.layers[baseLayer.id];
 
   return (
     <div className="flex-1 overflow-y-auto text-white">
       <div className="px-3 py-2 border-b border-surface-700 text-xs font-medium text-gray-400 uppercase tracking-wide flex items-center justify-between">
         <span>Свойства</span>
-        {layer.locked && (
+        {baseLayer!.locked && (
           <span className="text-yellow-500 text-xs font-normal normal-case flex items-center gap-1">
             🔒 Заблокирован
           </span>
@@ -485,29 +725,56 @@ export function PropertiesPanel() {
 
       {/* Transform */}
       <Section title="Позиция и размер">
+        {editingKeyframe && (
+          <p className="text-[10px] text-amber-400/90 mb-1.5">Редактирование ключа — кадр {timelinePlayhead}</p>
+        )}
         <Row>
           <Lbl>X</Lbl>
-          <NumInput value={t.x} onChange={(v) => updT({ x: v })} />
+          <NumInput value={Math.round(t.x)} onChange={(v) => updT({ x: v })} wide />
+          <KeyButton active={layerKeyAtPlayhead?.x !== undefined} onClick={() => addLayerPropKey('x')} />
+        </Row>
+        <Row>
           <Lbl>Y</Lbl>
-          <NumInput value={t.y} onChange={(v) => updT({ y: v })} />
+          <NumInput value={Math.round(t.y)} onChange={(v) => updT({ y: v })} wide />
+          <KeyButton active={layerKeyAtPlayhead?.y !== undefined} onClick={() => addLayerPropKey('y')} />
         </Row>
         <Row>
           <Lbl>Ш</Lbl>
-          <NumInput value={t.width} min={1} onChange={(v) => updT({ width: v })} />
+          <NumInput value={Math.round(t.width)} min={1} onChange={(v) => updT({ width: v })} wide />
+          <KeyButton active={layerKeyAtPlayhead?.width !== undefined} onClick={() => addLayerPropKey('width')} />
+        </Row>
+        <Row>
           <Lbl>В</Lbl>
-          <NumInput value={t.height} min={1} onChange={(v) => updT({ height: v })} />
+          <NumInput value={Math.round(t.height)} min={1} onChange={(v) => updT({ height: v })} wide />
+          <KeyButton active={layerKeyAtPlayhead?.height !== undefined} onClick={() => addLayerPropKey('height')} />
         </Row>
         <Row>
           <Lbl>Угол°</Lbl>
-          <NumInput value={t.rotation} min={-360} max={360} onChange={(v) => updT({ rotation: v })} />
-          <Lbl>Прозр.</Lbl>
-          <NumInput value={Math.round(layer.opacity * 100)} min={0} max={100} onChange={(v) => upd({ opacity: v / 100 })} />
+          <NumInput value={Math.round(t.rotation)} min={-360} max={360} onChange={(v) => updT({ rotation: v })} wide />
+          <KeyButton active={layerKeyAtPlayhead?.rotation !== undefined} onClick={() => addLayerPropKey('rotation')} />
         </Row>
+        <Row>
+          <Lbl>Прозр.</Lbl>
+          <NumInput value={Math.round(baseLayer!.opacity * 100)} min={0} max={100} onChange={(v) => upd({ opacity: v / 100 })} wide />
+        </Row>
+        <div className="relative">
+          <ScaleLockButton locked={scaleLocked} onToggle={toggleScaleLock} />
+          <Row>
+            <Lbl>Scale X</Lbl>
+            <NumInput value={t.scaleX} min={0.01} step={0.05} onChange={updLayerScaleX} wide />
+            <KeyButton active={layerKeyAtPlayhead?.scaleX !== undefined} onClick={() => addLayerPropKey('scaleX')} />
+          </Row>
+          <Row>
+            <Lbl>Scale Y</Lbl>
+            <NumInput value={t.scaleY} min={0.01} step={0.05} onChange={updLayerScaleY} wide />
+            <KeyButton active={layerKeyAtPlayhead?.scaleY !== undefined} onClick={() => addLayerPropKey('scaleY')} />
+          </Row>
+        </div>
       </Section>
 
       {/* Text layer */}
-      {layer.type === 'text' && (() => {
-        const l = layer as TextLayer;
+      {baseLayer!.type === 'text' && (() => {
+        const l = baseLayer as TextLayer;
         const vars = template.variables;
         const updS = (patch: object) => upd({ style: { ...l.style, ...patch } });
         return (
@@ -613,8 +880,8 @@ export function PropertiesPanel() {
       })()}
 
       {/* Rect layer */}
-      {layer.type === 'rect' && (() => {
-        const l = layer as RectLayer;
+      {baseLayer!.type === 'rect' && (() => {
+        const l = baseLayer as RectLayer;
         return (
           <Section title="Прямоугольник">
             <Row>
@@ -644,8 +911,8 @@ export function PropertiesPanel() {
       })()}
 
       {/* Clock layer */}
-      {layer.type === 'clock' && (() => {
-        const l = layer as ClockLayer;
+      {baseLayer!.type === 'clock' && (() => {
+        const l = baseLayer as ClockLayer;
         const updS = (patch: object) => upd({ style: { ...l.style, ...patch } });
         return (
           <>
@@ -759,18 +1026,17 @@ export function PropertiesPanel() {
       })()}
 
       {/* Video layer */}
-      {layer.type === 'video' && (() => {
-        const l = layer as VideoLayer;
+      {baseLayer!.type === 'video' && (() => {
+        const l = baseLayer as VideoLayer;
         return (
           <Section title="Видео">
             <Row>
               <Lbl>URL</Lbl>
-              <input
-                type="text"
+              <BindableField
                 value={l.src}
+                varFilter={template.variables.filter((v) => v.type === 'video')}
+                onChange={(v) => upd({ src: v })}
                 placeholder="/uploads/video.webm"
-                onChange={(e) => upd({ src: e.target.value })}
-                className="flex-1 min-w-0 bg-surface-700 border border-surface-600 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none focus:border-accent-500"
               />
             </Row>
             <Row>
@@ -811,7 +1077,7 @@ export function PropertiesPanel() {
             {l.src && (
               <div className="px-3 pb-2">
                 <p className="text-xs text-gray-500">
-                  Используйте <span className="text-accent-400 font-mono">.webm</span> с альфа-каналом для прозрачности (VP9+alpha)
+                  РСЃРїРѕР»СЊР·СѓР№С‚Рµ <span className="text-accent-400 font-mono">.webm</span> с альфа-каналом для прозрачности (VP9+alpha)
                 </p>
               </div>
             )}
@@ -820,10 +1086,10 @@ export function PropertiesPanel() {
       })()}
 
       {/* Image layer */}
-      {layer.type === 'image' && (() => {
-        const l = layer as ImageLayer;
+      {baseLayer!.type === 'image' && (() => {
+        const l = baseLayer as ImageLayer;
         return (
-          <Section title="Изображение">
+          <Section title="РР·РѕР±СЂР°Р¶РµРЅРёРµ">
             <ImageUploadRow
               value={l.src}
               variables={template.variables.filter((v) => v.type === 'image')}
@@ -858,3 +1124,6 @@ export function PropertiesPanel() {
     </div>
   );
 }
+
+
+

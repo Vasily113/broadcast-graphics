@@ -1,6 +1,14 @@
 import * as PIXI from 'pixi.js';
 import { gsap } from 'gsap';
 import { Layer, Template, TextLayer, ImageLayer, RectLayer, ClockLayer, VideoLayer } from './schema';
+import { flattenLayersInStackOrder } from './stackOrder';
+import {
+  createTimelinePlaybackState,
+  hasAnyTimelineKeys,
+  normalizeTimeline,
+  prepareTemplateForRender,
+  stepTimelinePlayback,
+} from './timeline';
 
 export function formatClockValue(layer: ClockLayer): string {
   const now = Math.floor(Date.now() / 1000);
@@ -101,8 +109,8 @@ export class TemplateRenderer {
 
     const existingIds = new Set(this.layerMap.keys());
 
-    // Рендерим в обратном порядке (нижние слои — в конце массива)
-    const reversed = [...template.layers].reverse();
+    const ordered = flattenLayersInStackOrder(template);
+    const reversed = [...ordered].reverse();
 
     reversed.forEach((layer, index) => {
       existingIds.delete(layer.id);
@@ -152,6 +160,8 @@ export class TemplateRenderer {
 
   private applyLayer(obj: PIXI.DisplayObject, layer: Layer, variables: Record<string, string>) {
     const t = layer.transform;
+    const scaleX = t.scaleX ?? 1;
+    const scaleY = t.scaleY ?? 1;
     obj.x = t.x;
     obj.y = t.y;
     obj.rotation = (t.rotation * Math.PI) / 180;
@@ -182,6 +192,7 @@ export class TemplateRenderer {
         wordWrap: true,
         wordWrapWidth: t.width,
       });
+      text.scale.set(scaleX, scaleY);
     }
 
     if (layer.type === 'rect') {
@@ -201,6 +212,7 @@ export class TemplateRenderer {
         g.drawRect(0, 0, rw, rh);
       }
       g.endFill();
+      g.scale.set(scaleX, scaleY);
     }
 
     if (layer.type === 'image') {
@@ -220,19 +232,20 @@ export class TemplateRenderer {
     if (layer.type === 'video') {
       const sprite = obj as PIXI.Sprite;
       const l = layer as VideoLayer;
-      if (l.src) {
+      const src = this.resolveValue(l.src, variables, '');
+      if (src) {
         const existing = this.videoMap.get(layer.id);
-        if (!existing || existing.src !== l.src) {
+        if (!existing || existing.src !== src) {
           if (existing) { try { existing.el.pause(); existing.el.removeAttribute('src'); existing.el.load(); } catch (e) {} }
           const el = document.createElement('video');
-          el.src = l.src;
+          el.src = src;
           el.loop = l.loop;
           el.muted = true;
           el.autoplay = true;
           el.playsInline = true;
           el.crossOrigin = 'anonymous';
           el.play().catch(() => {});
-          this.videoMap.set(layer.id, { el, src: l.src });
+          this.videoMap.set(layer.id, { el, src });
           sprite.texture = PIXI.Texture.from(el);
         } else {
           existing.el.loop = l.loop;
@@ -246,6 +259,8 @@ export class TemplateRenderer {
 
   private applyVideoFit(sprite: PIXI.Sprite, layer: VideoLayer) {
     const t = layer.transform;
+    const scaleX = t.scaleX ?? 1;
+    const scaleY = t.scaleY ?? 1;
     const fit = layer.fit ?? 'stretch';
     const entry = this.videoMap.get(layer.id);
     const nw = entry?.el.videoWidth ?? 0;
@@ -254,7 +269,7 @@ export class TemplateRenderer {
 
     if (!loaded || fit === 'stretch') {
       sprite.x = t.x; sprite.y = t.y;
-      sprite.width = t.width; sprite.height = t.height;
+      sprite.width = t.width * scaleX; sprite.height = t.height * scaleY;
       return;
     }
 
@@ -264,7 +279,7 @@ export class TemplateRenderer {
     const sw = nw * scale, sh = nh * scale;
     sprite.x = t.x + (t.width - sw) / 2;
     sprite.y = t.y + (t.height - sh) / 2;
-    sprite.width = sw; sprite.height = sh;
+    sprite.width = sw * scaleX; sprite.height = sh * scaleY;
 
     // Cover needs a mask
     let mask = this.maskMap.get(layer.id);
@@ -277,7 +292,7 @@ export class TemplateRenderer {
       }
       mask.clear();
       mask.beginFill(0xffffff);
-      mask.drawRect(t.x, t.y, t.width, t.height);
+      mask.drawRect(t.x, t.y, t.width * scaleX, t.height * scaleY);
       mask.endFill();
     } else if (mask) {
       sprite.mask = null;
@@ -289,6 +304,8 @@ export class TemplateRenderer {
 
   private applyImageFit(sprite: PIXI.Sprite, layer: ImageLayer) {
     const t = layer.transform;
+    const scaleX = t.scaleX ?? 1;
+    const scaleY = t.scaleY ?? 1;
     const fit = layer.fit ?? 'stretch';
     const tex = sprite.texture;
     const loaded = tex && tex !== PIXI.Texture.EMPTY && tex.valid && tex.orig.width > 0;
@@ -296,8 +313,8 @@ export class TemplateRenderer {
     if (!loaded || fit === 'stretch') {
       sprite.x = t.x;
       sprite.y = t.y;
-      sprite.width = t.width;
-      sprite.height = t.height;
+      sprite.width = t.width * scaleX;
+      sprite.height = t.height * scaleY;
     } else {
       const nw = tex.orig.width;
       const nh = tex.orig.height;
@@ -308,8 +325,8 @@ export class TemplateRenderer {
       const sh = nh * scale;
       sprite.x = t.x + (t.width - sw) / 2;
       sprite.y = t.y + (t.height - sh) / 2;
-      sprite.width = sw;
-      sprite.height = sh;
+      sprite.width = sw * scaleX;
+      sprite.height = sh * scaleY;
     }
 
     // Cover mode needs a mask to clip overflow
@@ -323,7 +340,7 @@ export class TemplateRenderer {
       }
       mask.clear();
       mask.beginFill(0xffffff);
-      mask.drawRect(t.x, t.y, t.width, t.height);
+      mask.drawRect(t.x, t.y, t.width * scaleX, t.height * scaleY);
       mask.endFill();
     } else if (mask) {
       sprite.mask = null;
@@ -335,30 +352,38 @@ export class TemplateRenderer {
 
   getObject(id: string) { return this.layerMap.get(id); }
 
-  playIn(template: Template, onComplete?: () => void) {
-    const tl = gsap.timeline({ onComplete });
-    template.tracks.forEach((track) => {
-      const obj = this.layerMap.get(track.layerId);
-      if (!obj || track.inKeyframes.length === 0) return;
-      const fromState: Record<string, number> = { alpha: 0 };
-      track.inKeyframes.forEach((kf) => {
-        if (kf.fromProperties) Object.assign(fromState, kf.fromProperties);
-      });
-      gsap.set(obj, fromState);
-      track.inKeyframes.forEach((kf) => {
-        tl.to(obj, { duration: kf.time / 1000, ease: kf.easing, ...kf.properties }, 0);
-      });
-    });
-  }
-
-  playOut(template: Template, onComplete?: () => void) {
-    const tl = gsap.timeline({ onComplete });
-    template.tracks.forEach((track) => {
-      const obj = this.layerMap.get(track.layerId);
-      if (!obj || track.outKeyframes.length === 0) return;
-      track.outKeyframes.forEach((kf) => {
-        tl.to(obj, { duration: kf.time / 1000, ease: kf.easing, ...kf.properties }, 0);
-      });
+  playTimeline(template: Template, variables: Record<string, string> = {}, onComplete?: () => void) {
+    const timeline = normalizeTimeline(template.timeline);
+    if (!hasAnyTimelineKeys(timeline)) {
+      onComplete?.();
+      return;
+    }
+    const fps = timeline.fps;
+    const maxFrame = Math.max(0, timeline.durationFrames);
+    const infinitePlayback = timeline.playbackMode === 'infinite';
+    const proxy = { frame: 0 };
+    let playbackState = createTimelinePlaybackState(timeline.directors);
+    let previousFrame = 0;
+    gsap.to(proxy, {
+      frame: maxFrame,
+      duration: maxFrame / fps,
+      repeat: infinitePlayback ? -1 : 0,
+      ease: 'none',
+      onUpdate: () => {
+        const frame = Math.round(proxy.frame);
+        const result = stepTimelinePlayback(timeline, previousFrame, frame, playbackState);
+        playbackState = result.state;
+        previousFrame = frame;
+        const preview = prepareTemplateForRender(template, playbackState.directorPlayheads);
+        this.syncTemplate(preview, variables);
+      },
+      onRepeat: () => {
+        if (!infinitePlayback) return;
+        playbackState = createTimelinePlaybackState(timeline.directors);
+        previousFrame = 0;
+        proxy.frame = 0;
+      },
+      onComplete,
     });
   }
 

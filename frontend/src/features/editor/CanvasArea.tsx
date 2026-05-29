@@ -1,6 +1,7 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { useEditorStore } from '../../core/store';
 import { TemplateRenderer } from '../../core/renderer';
+import { getEditorDisplayTemplate } from '../../core/timeline';
 import { Layer, createDefaultTransform, TextLayer, RectLayer, ImageLayer, ClockLayer, VideoLayer } from '../../core/schema';
 
 const textFill = (fill: TextLayer['style']['fill']): string =>
@@ -29,7 +30,14 @@ export function CanvasArea() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<TemplateRenderer | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const { template, zoom, setZoom, tool, selectLayer, selectedLayerIds, addLayer, updateLayer, previewMode, setPreviewMode, snapToGrid, gridSize } = useEditorStore();
+  const {
+    template, zoom, setZoom, tool, selectLayer, selectedLayerIds, addLayer, updateLayer,
+    updateLayerTransform, snapToGrid, gridSize, timelineDirectorPlayheads,
+  } = useEditorStore();
+  const displayTemplate = useMemo(
+    () => getEditorDisplayTemplate(template, timelineDirectorPlayheads),
+    [template, timelineDirectorPlayheads],
+  );
   const [dragging, setDragging] = useState<DragState | null>(null);
   const [resizing, setResizing] = useState<ResizeState | null>(null);
   const [rotating, setRotating] = useState<RotateState | null>(null);
@@ -58,11 +66,12 @@ export function CanvasArea() {
 
   useEffect(() => {
     try {
-      rendererRef.current?.syncTemplate(template);
+      const preview = getEditorDisplayTemplate(template, timelineDirectorPlayheads);
+      rendererRef.current?.syncTemplate(preview);
     } catch (e) {
       console.error('syncTemplate failed:', e);
     }
-  }, [template]);
+  }, [template, timelineDirectorPlayheads]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -77,20 +86,6 @@ export function CanvasArea() {
     el.addEventListener('wheel', handler, { passive: false });
     return () => el.removeEventListener('wheel', handler);
   }, [setZoom]);
-
-  useEffect(() => {
-    const r = rendererRef.current;
-    if (!r) return;
-    if (previewMode === 'in') {
-      r.syncTemplate(template);
-      r.playIn(template);
-    } else if (previewMode === 'out') {
-      r.syncTemplate(template);
-      r.playOut(template, () => setPreviewMode('design'));
-    } else {
-      r.syncTemplate(template);
-    }
-  }, [previewMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const canvasWidth = template.canvas.width * zoom;
   const canvasHeight = template.canvas.height * zoom;
@@ -115,7 +110,7 @@ export function CanvasArea() {
       const id = crypto.randomUUID();
       const layer: ImageLayer = {
         id, name: file.name.replace(/\.[^.]+$/, ''), type: 'image',
-        visible: true, locked: false, opacity: 1, blendMode: 'normal',
+        visible: true, locked: false, opacity: 1, blendMode: 'normal', groupId: null,
         transform: { ...createDefaultTransform(x, y), width: 300, height: 200 },
         src: url, cornerRadius: 0, fit: 'stretch',
       };
@@ -140,7 +135,7 @@ export function CanvasArea() {
 
     if (tool === 'text') {
       layer = {
-        id, name: 'Текст', type: 'text', visible: true, locked: false, opacity: 1, blendMode: 'normal',
+        id, name: 'Текст', type: 'text', visible: true, locked: false, opacity: 1, blendMode: 'normal', groupId: null,
         transform: { ...createDefaultTransform(x, y), width: 300, height: 80 },
         content: 'Текст',
         style: {
@@ -152,19 +147,19 @@ export function CanvasArea() {
       } as TextLayer;
     } else if (tool === 'rect') {
       layer = {
-        id, name: 'Прямоугольник', type: 'rect', visible: true, locked: false, opacity: 1, blendMode: 'normal',
+        id, name: 'Прямоугольник', type: 'rect', visible: true, locked: false, opacity: 1, blendMode: 'normal', groupId: null,
         transform: { ...createDefaultTransform(x, y), width: 300, height: 80 },
         fill: '#3a3a3a', cornerRadius: 0, borderColor: '#ffffff', borderWidth: 0,
       } as RectLayer;
     } else if (tool === 'image') {
       layer = {
-        id, name: 'Изображение', type: 'image', visible: true, locked: false, opacity: 1, blendMode: 'normal',
+        id, name: 'Изображение', type: 'image', visible: true, locked: false, opacity: 1, blendMode: 'normal', groupId: null,
         transform: { ...createDefaultTransform(x, y), width: 300, height: 200 },
         src: '', cornerRadius: 0, fit: 'stretch',
       } as ImageLayer;
     } else if (tool === 'clock') {
       layer = {
-        id, name: 'Часы', type: 'clock', visible: true, locked: false, opacity: 1, blendMode: 'normal',
+        id, name: 'Часы', type: 'clock', visible: true, locked: false, opacity: 1, blendMode: 'normal', groupId: null,
         transform: { ...createDefaultTransform(x, y), width: 400, height: 90 },
         mode: 'clock', format: 'HH:mm:ss',
         style: {
@@ -176,7 +171,7 @@ export function CanvasArea() {
       } as ClockLayer;
     } else if (tool === 'video') {
       layer = {
-        id, name: 'Видео', type: 'video', visible: true, locked: false, opacity: 1, blendMode: 'normal',
+        id, name: 'Видео', type: 'video', visible: true, locked: false, opacity: 1, blendMode: 'normal', groupId: null,
         transform: { ...createDefaultTransform(x, y), width: 480, height: 270 },
         src: '', loop: true, fit: 'stretch',
       } as VideoLayer;
@@ -192,11 +187,11 @@ export function CanvasArea() {
     e.stopPropagation();
     if (tool !== 'select') return;
     if (editingLayerId === id) return; // let textarea handle its own events
-    const layer = template.layers.find(l => l.id === id);
+    const layer = displayTemplate.layers.find((l) => l.id === id);
     if (!layer || layer.locked) return;
     selectLayer(id, e.shiftKey);
     setDragging({ id, startX: e.clientX, startY: e.clientY, origX: layer.transform.x, origY: layer.transform.y });
-  }, [tool, template.layers, selectLayer, editingLayerId]);
+  }, [tool, displayTemplate.layers, selectLayer, editingLayerId]);
 
   const handleLayerDoubleClick = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -210,15 +205,15 @@ export function CanvasArea() {
 
   const handleResizeMouseDown = useCallback((e: React.MouseEvent, id: string, handle: ResizeHandle) => {
     e.stopPropagation();
-    const layer = template.layers.find(l => l.id === id);
+    const layer = displayTemplate.layers.find((l) => l.id === id);
     if (!layer || layer.locked) return;
     const { x, y, width, height } = layer.transform;
     setResizing({ id, handle, startX: e.clientX, startY: e.clientY, origX: x, origY: y, origW: width, origH: height });
-  }, [template.layers]);
+  }, [displayTemplate.layers]);
 
   const handleRotateMouseDown = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    const layer = template.layers.find(l => l.id === id);
+    const layer = displayTemplate.layers.find((l) => l.id === id);
     if (!layer || layer.locked) return;
     const containerRect = containerRef.current?.getBoundingClientRect();
     if (!containerRect) return;
@@ -227,7 +222,7 @@ export function CanvasArea() {
     const centerYScreen = containerRect.top + (t.y + t.height / 2) * zoom;
     const startAngle = Math.atan2(e.clientY - centerYScreen, e.clientX - centerXScreen) * (180 / Math.PI);
     setRotating({ id, centerXScreen, centerYScreen, startAngle, origRotation: t.rotation });
-  }, [template.layers, zoom]);
+  }, [displayTemplate.layers, zoom]);
 
   const snapVal = useCallback((v: number) => {
     if (!snapToGrid) return v;
@@ -240,7 +235,7 @@ export function CanvasArea() {
       let newRotation = rotating.origRotation + (angle - rotating.startAngle);
       if (e.shiftKey) newRotation = Math.round(newRotation / 15) * 15;
       const layer = template.layers.find(l => l.id === rotating.id);
-      if (layer) updateLayer(rotating.id, { transform: { ...layer.transform, rotation: newRotation } });
+      if (layer) updateLayerTransform(rotating.id, { rotation: newRotation });
       return;
     }
 
@@ -291,14 +286,11 @@ export function CanvasArea() {
 
       // Snap to grid (skip when Shift held — aspect ratio mode)
       const snap = !e.shiftKey;
-      updateLayer(id, {
-        transform: {
-          ...layer.transform,
-          x: Math.round(snap ? snapVal(x) : x),
-          y: Math.round(snap ? snapVal(y) : y),
-          width: Math.round(snap ? snapVal(w) : w),
-          height: Math.round(snap ? snapVal(h) : h),
-        },
+      updateLayerTransform(id, {
+        x: Math.round(snap ? snapVal(x) : x),
+        y: Math.round(snap ? snapVal(y) : y),
+        width: Math.round(snap ? snapVal(w) : w),
+        height: Math.round(snap ? snapVal(h) : h),
       });
       return;
     }
@@ -311,9 +303,9 @@ export function CanvasArea() {
       // Shift temporarily disables snap
       const newX = e.shiftKey ? dragging.origX + dx : snapVal(dragging.origX + dx);
       const newY = e.shiftKey ? dragging.origY + dy : snapVal(dragging.origY + dy);
-      updateLayer(dragging.id, { transform: { ...layer.transform, x: newX, y: newY } });
+      updateLayerTransform(dragging.id, { x: newX, y: newY });
     }
-  }, [rotating, resizing, dragging, zoom, template.layers, updateLayer, snapVal]);
+  }, [rotating, resizing, dragging, zoom, template.layers, updateLayerTransform, snapVal]);
 
   const handleMouseUp = useCallback(() => {
     setDragging(null);
@@ -387,7 +379,7 @@ export function CanvasArea() {
             />
 
             {/* Selection + drag + resize overlays */}
-            {tool === 'select' && template.layers.map((layer) => {
+            {tool === 'select' && displayTemplate.layers.map((layer) => {
               const t = layer.transform;
               const isSelected = selectedLayerIds.includes(layer.id);
               return (
@@ -402,7 +394,7 @@ export function CanvasArea() {
                     top: t.y * zoom,
                     width: t.width * zoom,
                     height: t.height * zoom,
-                    transform: `rotate(${t.rotation}deg)`,
+                    transform: `rotate(${t.rotation}deg) scale(${t.scaleX ?? 1}, ${t.scaleY ?? 1})`,
                     transformOrigin: `${t.anchorX * 100}% ${t.anchorY * 100}%`,
                     border: `1px solid ${isSelected ? '#6366f1' : 'transparent'}`,
                     cursor: layer.type === 'text' && isSelected ? 'text' : dragging?.id === layer.id ? 'grabbing' : 'grab',
@@ -478,7 +470,7 @@ export function CanvasArea() {
                     top: t.y * zoom,
                     width: t.width * zoom,
                     height: t.height * zoom,
-                    transform: `rotate(${t.rotation}deg)`,
+                    transform: `rotate(${t.rotation}deg) scale(${t.scaleX ?? 1}, ${t.scaleY ?? 1})`,
                     transformOrigin: `${t.anchorX * 100}% ${t.anchorY * 100}%`,
                     fontFamily: tl.style.fontFamily,
                     fontSize: tl.style.fontSize * zoom,

@@ -4,6 +4,7 @@ import { EditorPage } from './pages/EditorPage';
 import { ControlPage } from './pages/ControlPage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { RendererPage } from './pages/RendererPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { Toaster } from './ui/toast';
 import './index.css';
 
@@ -13,6 +14,7 @@ const router = createBrowserRouter([
   { path: '/editor/:id', element: <EditorPage /> },
   { path: '/control', element: <ControlPage /> },
   { path: '/renderer', element: <RendererPage /> },
+  { path: '/settings', element: <SettingsPage /> },
 ]);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

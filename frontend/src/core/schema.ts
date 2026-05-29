@@ -22,9 +22,21 @@ export interface Variable {
   id: string;
   name: string;
   label: string;
-  type: 'text' | 'image' | 'number' | 'color';
+  type: 'text' | 'image' | 'number' | 'color' | 'video';
   defaultValue: string | number;
 }
+
+export interface LayerGroup {
+  id: string;
+  name: string;
+  parentId: string | null;
+  visible: boolean;
+  locked: boolean;
+  transform: Transform;
+}
+
+/** Порядок корневых элементов в панели слоёв (сверху = ближе к зрителю). */
+export type RootStackEntry = { kind: 'layer' | 'group'; id: string };
 
 export interface BaseLayer {
   id: string;
@@ -35,6 +47,7 @@ export interface BaseLayer {
   opacity: number;
   blendMode: BlendMode;
   transform: Transform;
+  groupId: string | null;
 }
 
 export interface TextLayer extends BaseLayer {
@@ -75,32 +88,73 @@ export interface RectLayer extends BaseLayer {
 export interface ClockLayer extends BaseLayer {
   type: 'clock';
   mode: 'clock' | 'countup' | 'countdown';
-  format: string;        // e.g. 'HH:mm:ss', 'mm:ss'
-  startTime?: number;    // unix seconds — for countup: when counting started
-  targetTime?: number;   // unix seconds — for countdown: target moment
+  format: string;
+  startTime?: number;
+  targetTime?: number;
   style: TextLayer['style'];
 }
 
 export interface VideoLayer extends BaseLayer {
   type: 'video';
-  src: string;
+  src: string | VariableBinding;
   loop: boolean;
   fit: 'stretch' | 'contain' | 'cover';
 }
 
 export type Layer = TextLayer | ImageLayer | RectLayer | ClockLayer | VideoLayer;
 
-export interface Keyframe {
-  time: number;
-  properties: Record<string, number>;
-  fromProperties?: Record<string, number>;
-  easing: EasingType;
+/** Параметры группы «Позиция и размер» для ключей таймлайна */
+export const POSITION_SIZE_PROPS = ['x', 'y', 'width', 'height', 'rotation', 'scaleX', 'scaleY'] as const;
+export type PositionSizeProp = (typeof POSITION_SIZE_PROPS)[number];
+export type PositionSizeValues = Partial<Record<PositionSizeProp, number>>;
+
+export interface BezierHandle {
+  cp1x: number;
+  cp1y: number;
+  cp2x: number;
+  cp2y: number;
 }
 
-export interface AnimationTrack {
-  layerId: string;
-  inKeyframes: Keyframe[];
-  outKeyframes: Keyframe[];
+export const DEFAULT_BEZIER: BezierHandle = { cp1x: 0.25, cp1y: 0.1, cp2x: 0.25, cp2y: 1 };
+
+/** Ключевой кадр на таймлайне (локальные значения по слоям и группам) */
+export interface TimelineKeyframe {
+  id: string;
+  frame: number;
+  layers: Record<string, PositionSizeValues>;
+  groups: Record<string, PositionSizeValues>;
+  easing: EasingType;
+  bezier?: BezierHandle;
+}
+
+export interface TimelineDirector {
+  id: string;
+  name: string;
+  durationFrames: number;
+  offsetFrames: number;
+  autostart: boolean;
+  loop: boolean;
+}
+
+export type TimelineActionCommand = 'startDirector' | 'stopDirector';
+
+export interface TimelineAction {
+  id: string;
+  directorId: string;
+  frame: number;
+  command: TimelineActionCommand;
+  targetDirectorId: string | null;
+}
+
+export interface Timeline {
+  fps: number;
+  /** Номер последнего кадра (включительно): при 100 доступны кадры 0…100 */
+  durationFrames: number;
+  playbackMode: 'bounded' | 'infinite';
+  directors: TimelineDirector[];
+  trackDirectors: Record<string, string>;
+  keyframes: TimelineKeyframe[];
+  actions: TimelineAction[];
 }
 
 export interface Template {
@@ -112,8 +166,31 @@ export interface Template {
     background: string;
   };
   variables: Variable[];
+  groups?: LayerGroup[];
   layers: Layer[];
-  tracks: AnimationTrack[];
+  rootStack?: RootStackEntry[];
+  groupStacks?: Record<string, RootStackEntry[]>;
+  timeline: Timeline;
+}
+
+export function createDefaultTimeline(): Timeline {
+  const defaultDirector: TimelineDirector = {
+    id: 'default',
+    name: 'default',
+    durationFrames: 500,
+    offsetFrames: 0,
+    autostart: true,
+    loop: false,
+  };
+  return {
+    fps: 50,
+    durationFrames: 500,
+    playbackMode: 'bounded',
+    directors: [defaultDirector],
+    trackDirectors: {},
+    keyframes: [],
+    actions: [],
+  };
 }
 
 export function createDefaultTemplate(): Template {
@@ -122,8 +199,32 @@ export function createDefaultTemplate(): Template {
     name: 'Новый шаблон',
     canvas: { width: 1920, height: 1080, background: 'transparent' },
     variables: [],
+    groups: [],
     layers: [],
-    tracks: [],
+    timeline: createDefaultTimeline(),
+  };
+}
+
+export const POSITION_SIZE_LABELS: Record<PositionSizeProp, string> = {
+  x: 'X',
+  y: 'Y',
+  width: 'Ширина',
+  height: 'Высота',
+  rotation: 'Угол°',
+  scaleX: 'Scale X',
+  scaleY: 'Scale Y',
+};
+
+export function layerToPositionSizeValues(layer: Layer): PositionSizeValues {
+  const t = layer.transform;
+  return {
+    x: t.x,
+    y: t.y,
+    width: t.width,
+    height: t.height,
+    rotation: t.rotation,
+    scaleX: t.scaleX,
+    scaleY: t.scaleY,
   };
 }
 

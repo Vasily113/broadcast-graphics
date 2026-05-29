@@ -6,6 +6,9 @@ import { fileURLToPath } from 'url';
 import { templateRouter } from './routes/templates.js';
 import { controlRouter } from './routes/control.js';
 import { uploadsRouter } from './routes/uploads.js';
+import { rundownRouter } from './routes/rundowns.js';
+import { settingsRouter } from './routes/settings.js';
+import { channelRouter } from './routes/channels.js';
 import { initDb } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -16,56 +19,89 @@ expressWs(app);
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-const rendererClients = new Set();
-const controlClients = new Set();
+// ── Channel-aware WebSocket state ───────────────────────────────────────────
+// rendererClients: channelId → Set<WebSocket>
+// onAirState:      channelId → Map<templateId, command>
+const rendererClients = new Map();
+const onAirState      = new Map();
 
-// Tracks currently on-air templates: templateId -> last take command (with latest variables)
-const onAirState = new Map();
+function getClients(channelId) {
+  if (!rendererClients.has(channelId)) rendererClients.set(channelId, new Set());
+  return rendererClients.get(channelId);
+}
 
-app.ws('/ws/renderer', (ws) => {
-  console.log('Renderer connected');
-  rendererClients.add(ws);
+function getState(channelId) {
+  if (!onAirState.has(channelId)) onAirState.set(channelId, new Map());
+  return onAirState.get(channelId);
+}
 
-  // Replay current on-air state so late-connecting renderers (e.g. OBS) get the full picture
-  onAirState.forEach((cmd) => {
+// ── Renderer WS: each renderer registers with its channelId ────────────────
+app.ws('/ws/renderer', (ws, req) => {
+  const channelId = req.query.channel || 'default';
+  const clients = getClients(channelId);
+  clients.add(ws);
+  console.log(`Renderer connected [channel=${channelId}]  total=${clients.size}`);
+
+  // Replay current on-air state so late-connecting renderers get full picture
+  getState(channelId).forEach((cmd) => {
     if (ws.readyState === 1) ws.send(JSON.stringify(cmd));
   });
 
-  ws.on('close', () => rendererClients.delete(ws));
+  ws.on('close', () => {
+    clients.delete(ws);
+    console.log(`Renderer disconnected [channel=${channelId}]  total=${clients.size}`);
+  });
 });
 
+// ── Control WS: routes commands to renderers of the matching channel ────────
 app.ws('/ws/control', (ws) => {
   console.log('Control client connected');
-  controlClients.add(ws);
   ws.on('message', (msg) => {
-    const command = JSON.parse(msg);
+    let command;
+    try { command = JSON.parse(msg); } catch { return; }
 
-    // Maintain on-air state
+    const channelId = command.channelId || 'default';
+    const state     = getState(channelId);
+
+    // Maintain on-air state per channel
     if (command.type === 'take') {
-      onAirState.set(command.templateId, command);
+      state.set(command.templateId, command);
     } else if (command.type === 'clear') {
-      onAirState.delete(command.templateId);
+      state.delete(command.templateId);
     } else if (command.type === 'update') {
-      const existing = onAirState.get(command.templateId);
-      if (existing) onAirState.set(command.templateId, { ...existing, variables: command.variables });
+      const existing = state.get(command.templateId);
+      if (existing) state.set(command.templateId, { ...existing, variables: command.variables });
     }
 
-    rendererClients.forEach(client => {
+    // Route to renderers on this channel only
+    getClients(channelId).forEach((client) => {
       if (client.readyState === 1) client.send(JSON.stringify(command));
     });
   });
-  ws.on('close', () => controlClients.delete(ws));
+  ws.on('close', () => console.log('Control client disconnected'));
+});
+
+// Returns currently on-air template/slot IDs grouped by channel
+app.get('/api/onair', (req, res) => {
+  const result = {};
+  onAirState.forEach((channelMap, channelId) => {
+    if (channelMap.size > 0) result[channelId] = Array.from(channelMap.keys());
+  });
+  res.json(result);
 });
 
 app.use('/api/templates', templateRouter);
-app.use('/api/control', controlRouter);
-app.use('/api/uploads', uploadsRouter);
+app.use('/api/control',   controlRouter);
+app.use('/api/uploads',   uploadsRouter);
+app.use('/api/rundowns',  rundownRouter);
+app.use('/api/settings',  settingsRouter);
+app.use('/api/channels',  channelRouter);
 app.use('/uploads', express.static(path.resolve(__dirname, '../../data/uploads')));
 app.use(express.static(path.resolve(__dirname, '../public')));
 
-// Запускаем после инициализации БД
 initDb().then(() => {
-  app.listen(3001, () => {
-    console.log('Backend running on http://localhost:3001');
+  const port = Number(process.env.PORT) || 3001;
+  app.listen(port, () => {
+    console.log(`Backend running on http://localhost:${port}`);
   });
 });

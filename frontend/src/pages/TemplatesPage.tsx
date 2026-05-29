@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Edit2, Trash2, Tv, Check, X, Copy, Upload } from 'lucide-react';
+import { Plus, Edit2, Trash2, Tv, Check, X, Copy, Upload, Settings } from 'lucide-react';
 import { TemplateThumbnail } from '../features/templates/TemplateThumbnail';
 
 interface TemplateItem { id: string; name: string; updated_at: number; }
@@ -32,7 +32,16 @@ export function TemplatesPage() {
       id: crypto.randomUUID(),
       name,
       canvas: { width: 1920, height: 1080, background: 'transparent' },
-      variables: [], layers: [], tracks: [],
+      variables: [], groups: [], layers: [],
+      timeline: {
+        fps: 50,
+        durationFrames: 500,
+        playbackMode: 'bounded',
+        directors: [{ id: 'default', name: 'default', durationFrames: 125, offsetFrames: 0, autostart: true, loop: false }],
+        trackDirectors: {},
+        keyframes: [],
+        actions: [],
+      },
     };
     const r = await fetch('/api/templates', {
       method: 'POST',
@@ -88,6 +97,13 @@ export function TemplatesPage() {
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-2xl font-bold text-white">Шаблоны графики</h1>
           <div className="flex gap-3">
+            <button
+              onClick={() => navigate('/settings')}
+              className="flex items-center gap-2 px-4 py-2 bg-surface-700 hover:bg-surface-600 rounded-lg text-sm transition-colors text-gray-400"
+              title="Настройки DeckLink"
+            >
+              <Settings size={16} />
+            </button>
             <button
               onClick={() => navigate('/control')}
               className="flex items-center gap-2 px-4 py-2 bg-surface-700 hover:bg-surface-600 rounded-lg text-sm transition-colors"

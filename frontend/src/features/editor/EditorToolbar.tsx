@@ -10,9 +10,10 @@ import {
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
   Grid2x2,
 } from 'lucide-react';
+import { NumericInput } from './NumericInput';
 
 export function EditorToolbar({ templateId }: { templateId: string }) {
-  const { tool, setTool, template, previewMode, setPreviewMode, markSaved, setTemplateName, selectedLayerIds, alignLayers, snapToGrid, gridSize, setSnapToGrid, setGridSize } = useEditorStore();
+  const { tool, setTool, template, markSaved, setTemplateName, selectedLayerIds, alignLayers, snapToGrid, gridSize, setSnapToGrid, setGridSize } = useEditorStore();
   const isDirty = useEditorStore(selectIsDirty);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -134,25 +135,6 @@ export function EditorToolbar({ templateId }: { templateId: string }) {
         )}
       </div>
 
-      <div className="flex gap-1 bg-surface-700 rounded-lg p-0.5">
-        {(['design', 'in', 'out'] as const).map((m) => (
-          <button
-            key={m}
-            onClick={() => {
-              if (m === 'design') { setPreviewMode('design'); return; }
-              // Сбрасываем в design сначала, чтобы эффект сработал при повторном нажатии
-              setPreviewMode('design');
-              requestAnimationFrame(() => setPreviewMode(m));
-            }}
-            className={`px-3 py-1 rounded text-xs transition-colors ${previewMode === m ? 'bg-accent-500 text-white' : 'text-gray-400 hover:text-white'}`}
-          >
-            {m === 'design' ? 'Design' : m === 'in' ? '▶ In' : '◀ Out'}
-          </button>
-        ))}
-      </div>
-
-      <div className="w-px h-5 bg-surface-600 mx-1" />
-
       {/* Snap to grid */}
       <button
         onClick={() => setSnapToGrid(!snapToGrid)}
@@ -162,13 +144,12 @@ export function EditorToolbar({ templateId }: { templateId: string }) {
         <Grid2x2 size={15} />
       </button>
       {snapToGrid && (
-        <input
-          type="number"
+        <NumericInput
           value={gridSize}
           min={4}
           max={200}
-          onChange={(e) => { const v = parseInt(e.target.value); if (v >= 4 && v <= 200) setGridSize(v); }}
-          className="w-12 bg-surface-700 border border-surface-600 rounded px-1.5 py-0.5 text-xs text-white text-center focus:outline-none focus:border-accent-500"
+          onChange={(v) => setGridSize(Math.round(v))}
+          className="w-12 bg-surface-700 border border-surface-600 rounded px-1.5 py-0.5 text-xs text-white text-center focus:outline-none focus:border-accent-500 cursor-ew-resize"
           title="Размер ячейки сетки (px)"
         />
       )}

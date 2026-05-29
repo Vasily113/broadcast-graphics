@@ -6,10 +6,11 @@ import { LayersPanel } from '../features/editor/LayersPanel';
 import { CanvasArea } from '../features/editor/CanvasArea';
 import { PropertiesPanel } from '../features/editor/PropertiesPanel';
 import { VariablesPanel } from '../features/editor/VariablesPanel';
-import { AnimationPanel } from '../features/editor/AnimationPanel';
+import { TimelinePanel } from '../features/editor/TimelinePanel';
 import { useEditorStore, selectIsDirty } from '../core/store';
 import { toast } from '../ui/toast';
 import { Layer } from '../core/schema';
+import { buildTemplateAtFrame, hasAnyTimelineKeys } from '../core/timeline';
 
 // ── Shortcuts overlay ─────────────────────────────────────────────────────────
 
@@ -49,6 +50,12 @@ const SHORTCUT_GROUPS = [
       { keys: ['Shift', '+ресайз'], desc: 'Сохранить пропорции' },
       { keys: ['Shift', '+вращение'], desc: 'Шаг 15°' },
       { keys: ['Двойной клик'], desc: 'Редактировать текст' },
+    ],
+  },
+  {
+    title: 'Таймлайн',
+    items: [
+      { keys: ['.'], desc: 'Добавить ключ' },
     ],
   },
   {
@@ -239,6 +246,12 @@ export function EditorPage() {
         case 'i': setTool('image'); break;
         case 'k': setTool('clock'); break;
         case 'f': setTool('video'); break;
+        case '.':
+          if (!isInput) {
+            e.preventDefault();
+            useEditorStore.getState().addTimelineKeyframeAtPlayhead();
+          }
+          break;
         case 'delete':
         case 'backspace': {
           const { selectedLayerIds, template } = useEditorStore.getState();
@@ -254,13 +267,17 @@ export function EditorPage() {
         case 'arrowright': {
           e.preventDefault();
           const delta = e.shiftKey ? 10 : 1;
-          const { selectedLayerIds, template, updateLayer } = useEditorStore.getState();
+          const { selectedLayerIds, template, updateLayerTransform, timelinePlayhead } = useEditorStore.getState();
           const dx = e.key === 'ArrowLeft' ? -delta : e.key === 'ArrowRight' ? delta : 0;
           const dy = e.key === 'ArrowUp' ? -delta : e.key === 'ArrowDown' ? delta : 0;
+          const preview =
+            hasAnyTimelineKeys(template.timeline)
+              ? buildTemplateAtFrame(template, timelinePlayhead)
+              : template;
           selectedLayerIds.forEach((lid) => {
-            const layer = template.layers.find((l) => l.id === lid);
+            const layer = preview.layers.find((l) => l.id === lid);
             if (!layer || layer.locked) return;
-            updateLayer(lid, { transform: { ...layer.transform, x: layer.transform.x + dx, y: layer.transform.y + dy } });
+            updateLayerTransform(lid, { x: layer.transform.x + dx, y: layer.transform.y + dy });
           });
           break;
         }
@@ -278,7 +295,7 @@ export function EditorPage() {
         <LayersPanel />
         <div className="flex flex-col flex-1 overflow-hidden min-w-0">
           <CanvasArea />
-          <AnimationPanel />
+          <TimelinePanel />
         </div>
         <div className="flex flex-col w-64 border-l border-surface-700 flex-shrink-0">
           <PropertiesPanel />
