@@ -11,6 +11,7 @@ import { useEditorStore, selectIsDirty } from '../core/store';
 import { toast } from '../ui/toast';
 import { Layer } from '../core/schema';
 import { buildTemplateAtFrame, hasAnyTimelineKeys } from '../core/timeline';
+import { generateId } from '../core/id';
 
 // ── Shortcuts overlay ─────────────────────────────────────────────────────────
 
@@ -194,7 +195,7 @@ export function EditorPage() {
               e.preventDefault();
               const copies = layerClipboard.map((l) => ({
                 ...l,
-                id: crypto.randomUUID(),
+                id: generateId(),
                 name: `${l.name} (копия)`,
                 transform: { ...l.transform, x: l.transform.x + 20, y: l.transform.y + 20 },
               }));
@@ -211,7 +212,7 @@ export function EditorPage() {
                 .filter((l) => selectedLayerIds.includes(l.id))
                 .map((l) => ({
                   ...l,
-                  id: crypto.randomUUID(),
+                  id: generateId(),
                   name: `${l.name} (копия)`,
                   transform: { ...l.transform, x: l.transform.x + 20, y: l.transform.y + 20 },
                 }));

@@ -40,6 +40,7 @@ import {
   rebuildLayersArray,
   removeFromRootStack,
 } from './stackOrder';
+import { generateId } from './id';
 
 interface EditorState {
   template: Template;
@@ -765,7 +766,7 @@ export const useEditorStore = create<EditorState>()(
             s.timelineDirectorPlayheads[director.id] ?? Math.max(0, s.timelinePlayhead - director.offsetFrames),
           ));
           const action: TimelineAction = {
-            id: crypto.randomUUID(),
+            id: generateId(),
             directorId: director.id,
             frame,
             command: 'startDirector',
@@ -839,7 +840,7 @@ export const useEditorStore = create<EditorState>()(
         set((s) => {
           const timeline = normalizeTimeline(s.template.timeline);
           const director = {
-            id: crypto.randomUUID(),
+            id: generateId(),
             name: `Director ${timeline.directors.length + 1}`,
             durationFrames: timeline.durationFrames,
             offsetFrames: 0,
@@ -1078,7 +1079,7 @@ export const useEditorStore = create<EditorState>()(
           }
 
           const newKf = {
-            id: crypto.randomUUID(),
+            id: generateId(),
             frame: localFrame,
             layers: captured.layers,
             groups: captured.groups,
@@ -1143,7 +1144,7 @@ export const useEditorStore = create<EditorState>()(
             selectedTimelineKeyframeId = existing.id;
           } else {
             const newKf = {
-              id: crypto.randomUUID(),
+              id: generateId(),
               frame: localFrame,
               layers: captured.layers,
               groups: captured.groups,

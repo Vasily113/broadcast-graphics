@@ -11,6 +11,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } 
 import { CSS } from '@dnd-kit/utilities';
 import { Template, Variable } from '../core/schema';
 import { TemplateThumbnail } from '../features/templates/TemplateThumbnail';
+import { generateId } from '../core/id';
 
 type Command =
   | { type: 'take';   templateId: string; template: Template; variables: Record<string, string>; channelId?: string }
@@ -764,7 +765,7 @@ export function ControlPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: src.name + ' (копия)',
-        slots: src.slots.map(s => ({ ...s, slotId: crypto.randomUUID() })),
+        slots: src.slots.map(s => ({ ...s, slotId: generateId() })),
       }),
     });
     const created: RundownData = await r.json();
@@ -805,7 +806,7 @@ export function ControlPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: data.name ?? 'Импортированный rundown',
-          slots: (data.slots ?? []).map(s => ({ ...s, slotId: crypto.randomUUID() })),
+          slots: (data.slots ?? []).map(s => ({ ...s, slotId: generateId() })),
         }),
       });
       const created: RundownData = await r.json();
@@ -1375,7 +1376,7 @@ export function ControlPage() {
                           <button
                             key={t.id}
                             onClick={() => {
-                              setRundown((prev) => [...prev, { slotId: crypto.randomUUID(), templateId: t.id, name: t.name, vars: {} }]);
+                              setRundown((prev) => [...prev, { slotId: generateId(), templateId: t.id, name: t.name, vars: {} }]);
                               setShowAddMenu(false);
                             }}
                             className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-surface-700 hover:text-white transition-colors"

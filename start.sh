@@ -5,8 +5,8 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
 FRONTEND_DIR="$ROOT_DIR/frontend"
 
-BACKEND_PORT="${BACKEND_PORT:-3001}"
-FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+BACKEND_PORT="${BACKEND_PORT:-4001}"
+FRONTEND_PORT="${FRONTEND_PORT:-4000}"
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
 
 PIDS=()
@@ -94,6 +94,7 @@ echo "Backend is up on port $BACKEND_PORT"
 
 (
   cd "$FRONTEND_DIR"
+  export BACKEND_PORT="$BACKEND_PORT"
   exec npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --strictPort
 ) &
 PIDS+=("$!")

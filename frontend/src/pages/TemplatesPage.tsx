@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Edit2, Trash2, Tv, Check, X, Copy, Upload, Settings } from 'lucide-react';
 import { TemplateThumbnail } from '../features/templates/TemplateThumbnail';
+import { generateId } from '../core/id';
 
 interface TemplateItem { id: string; name: string; updated_at: number; }
 
@@ -16,7 +17,8 @@ export function TemplatesPage() {
 
   const load = async () => {
     const r = await fetch('/api/templates');
-    setTemplates(await r.json());
+    const payload = await r.json();
+    setTemplates(Array.isArray(payload) ? payload : []);
   };
 
   useEffect(() => { load(); }, []);
@@ -29,7 +31,7 @@ export function TemplatesPage() {
     const name = newName.trim();
     if (!name) return;
     const defaultTemplate = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       name,
       canvas: { width: 1920, height: 1080, background: 'transparent' },
       variables: [], groups: [], layers: [],
@@ -65,7 +67,7 @@ export function TemplatesPage() {
       const text = await file.text();
       const data = JSON.parse(text);
       const name = data.name ?? file.name.replace(/\.json$/, '');
-      const newData = { ...data, id: crypto.randomUUID() };
+      const newData = { ...data, id: generateId() };
       await fetch('/api/templates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -82,7 +84,7 @@ export function TemplatesPage() {
   const duplicate = async (t: TemplateItem) => {
     const r = await fetch(`/api/templates/${t.id}`);
     const { data } = (await r.json());
-    const newData = { ...data, id: crypto.randomUUID(), name: `${t.name} (копия)` };
+    const newData = { ...data, id: generateId(), name: `${t.name} (копия)` };
     await fetch('/api/templates', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

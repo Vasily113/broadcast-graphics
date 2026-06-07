@@ -3,6 +3,7 @@ import { useEditorStore } from '../../core/store';
 import { TemplateRenderer } from '../../core/renderer';
 import { getEditorDisplayTemplate } from '../../core/timeline';
 import { Layer, createDefaultTransform, TextLayer, RectLayer, ImageLayer, ClockLayer, VideoLayer } from '../../core/schema';
+import { generateId } from '../../core/id';
 
 const textFill = (fill: TextLayer['style']['fill']): string =>
   typeof fill === 'string' ? fill : '#ffffff';
@@ -107,7 +108,7 @@ export function CanvasArea() {
       if (!r.ok) throw new Error(`Upload failed: ${r.status}`);
       const { url } = await r.json();
 
-      const id = crypto.randomUUID();
+      const id = generateId();
       const layer: ImageLayer = {
         id, name: file.name.replace(/\.[^.]+$/, ''), type: 'image',
         visible: true, locked: false, opacity: 1, blendMode: 'normal', groupId: null,
@@ -130,7 +131,7 @@ export function CanvasArea() {
     const x = Math.round((e.clientX - rect.left) / zoom);
     const y = Math.round((e.clientY - rect.top) / zoom);
 
-    const id = crypto.randomUUID();
+    const id = generateId();
     let layer: Layer;
 
     if (tool === 'text') {

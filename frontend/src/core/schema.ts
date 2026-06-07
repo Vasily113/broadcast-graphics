@@ -1,5 +1,6 @@
 export type BlendMode = 'normal' | 'add' | 'multiply' | 'screen';
 export type EasingType = 'linear' | 'power2.out' | 'power2.in' | 'bounce.out' | 'elastic.out';
+import { generateId } from './id';
 
 export interface Transform {
   x: number;
@@ -195,7 +196,7 @@ export function createDefaultTimeline(): Timeline {
 
 export function createDefaultTemplate(): Template {
   return {
-    id: crypto.randomUUID(),
+    id: generateId(),
     name: 'Новый шаблон',
     canvas: { width: 1920, height: 1080, background: 'transparent' },
     variables: [],

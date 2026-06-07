@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Plus, Trash2, ChevronDown, ChevronRight, Pencil } from 'lucide-react';
 import { useEditorStore } from '../../core/store';
 import { Variable } from '../../core/schema';
+import { generateId } from '../../core/id';
 
 const TYPE_LABELS: Record<Variable['type'], string> = {
   text:  'Текст',
@@ -142,7 +143,7 @@ export function VariablesPanel() {
               submitLabel="Добавить"
               onSubmit={(form) => {
                 addVariable({
-                  id: crypto.randomUUID(),
+                  id: generateId(),
                   name: form.name!,
                   label: form.label?.trim() || form.name!,
                   type: (form.type as Variable['type']) ?? 'text',

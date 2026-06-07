@@ -22,6 +22,7 @@ import {
   localToWorld,
   worldToLocal,
 } from './transform';
+import { generateId } from './id';
 
 export type AnimTargetKind = 'layer' | 'group';
 export const DEFAULT_DIRECTOR_ID = 'default';
@@ -51,7 +52,7 @@ export function normalizeTimeline(timeline?: Timeline): Timeline {
   const seen = new Set<string>();
   const directors = sourceDirectors
     .map((director, index) => ({
-      id: director.id || (index === 0 ? DEFAULT_DIRECTOR_ID : crypto.randomUUID()),
+    id: director.id || (index === 0 ? DEFAULT_DIRECTOR_ID : generateId()),
       name: director.name || (index === 0 ? 'default' : `Director ${index + 1}`),
       durationFrames: Math.max(1, Math.round(director.durationFrames ?? durationFrames)),
       offsetFrames: Math.max(0, Math.round(director.offsetFrames ?? 0)),
@@ -75,7 +76,7 @@ export function normalizeTimeline(timeline?: Timeline): Timeline {
     .map((action) => {
       const director = directors.find((d) => d.id === action.directorId) ?? directors[0];
       return {
-        id: action.id || crypto.randomUUID(),
+        id: action.id || generateId(),
         directorId: action.directorId,
         frame: Math.max(0, Math.min(director.durationFrames, Math.round(action.frame ?? 0))),
         command: action.command === 'startDirector' || action.command === 'stopDirector'

@@ -1,4 +1,5 @@
 import { Layer, LayerGroup, Transform, createDefaultTransform } from './schema';
+import { generateId } from './id';
 
 export const IDENTITY_TRANSFORM: Transform = {
   x: 0,
@@ -84,7 +85,7 @@ export function getLayerParentWorld(
 
 export function createDefaultGroup(name = 'Группа', x = 0, y = 0): LayerGroup {
   return {
-    id: crypto.randomUUID(),
+    id: generateId(),
     name,
     parentId: null,
     visible: true,

@@ -1,0 +1,44 @@
+# broadcast-graphics runtime requirements
+#
+# NOTE:
+# This repository is Node.js-based (not Python), so this file is a launch
+# checklist and install guide, not a pip dependency lockfile.
+#
+# ------------------------------------------------------------
+# 1) Required software
+# ------------------------------------------------------------
+# - Node.js 20+ LTS
+# - npm (comes with Node.js)
+#
+# Linux (Ubuntu) for backend/frontend:
+# - bash
+# - ss command (usually from iproute2; used by start.sh)
+#
+# Optional for DeckLink SDI output (decklink-out):
+# - Blackmagic Desktop Video 16.x for Linux/Windows
+# - DeckLink SDK 16.x (headers/libs available for addon build)
+# - build-essential (Linux)
+# - python3-setuptools (Linux, for node-gyp)
+# - C++ toolchain (MSVC v143 on Windows OR gcc/g++ on Linux)
+#
+# ------------------------------------------------------------
+# 2) Project dependencies (install via npm, not pip)
+# ------------------------------------------------------------
+# Run from repository root:
+#
+#   cd backend && npm install && cd ..
+#   cd frontend && npm install && cd ..
+#   cd decklink-out && npm install && cd ..
+#
+# ------------------------------------------------------------
+# 3) Start commands
+# ------------------------------------------------------------
+# Backend + Frontend (Linux):
+#   ./start.sh
+#
+# Optional DeckLink SDI (Linux):
+#   ./build-decklink.sh
+#   ./start-decklink.sh
+#
+# Windows all-in-one:
+#   start.bat
