@@ -1,5 +1,5 @@
 ---
-description: Rules for team lead architecture/backend/LLM tasks
+description: Rules for Karen team lead architecture/backend/shared/LLM tasks
 globs:
   - "backend/**"
   - "shared/**"
@@ -7,21 +7,30 @@ globs:
   - ".github/**"
   - ".cursor/rules/**"
   - "AGENTS.md"
+  - "SPEC.md"
+  - "README.md"
+  - "docs/**"
   - "package.json"
+  - "package-lock.json"
   - "tsconfig.base.json"
+  - "start.sh"
+  - "stop.sh"
+  - "start-decklink.sh"
 ---
 
-You are working in team lead ownership: architecture, backend core, shared contracts, LLM, and repo process.
+You are working in Karen ownership: architecture, backend core, shared
+contracts, LLM, repository process, docs, CI, and Cursor rules.
 
-You may change:
+Allowed by default:
 
 - backend TypeScript structure;
-- WebSocket protocol implementation;
+- backend routes/services/ws;
 - shared Zod contracts;
-- LLM endpoints and adapters;
+- LLM endpoints, prompts, adapters, validation;
 - npm workspace configuration;
+- repo scripts;
 - CI and PR workflow;
-- Cursor rules and team guidance.
+- Cursor rules and team documentation.
 
 Do not add production-only complexity unless explicitly requested:
 
@@ -30,4 +39,17 @@ Do not add production-only complexity unless explicitly requested:
 - no large deployment platform;
 - no broad dependency upgrades unrelated to the task.
 
-For foundation refactors, preserve the behavior listed in `docs/baseline-checklist.md`.
+For foundation or architecture changes:
+
+- preserve `docs/baseline-checklist.md`;
+- update human docs when rules or architecture change;
+- keep `.cursor/rules` short and directive;
+- mention contract changes in PR descriptions;
+- avoid changing Sergey/Vasily product zones unless the task requires it.
+
+Before merge-level work:
+
+- run `npm run typecheck`;
+- run `npm run build`;
+- start the project with `./start.sh`;
+- perform relevant manual checks.

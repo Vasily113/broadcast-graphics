@@ -1,0 +1,38 @@
+---
+description: MVP scope and complexity limits
+alwaysApply: true
+---
+
+This project is an MVP for a demo. Prefer working product behavior and clear
+team boundaries over production-only complexity.
+
+Allowed by default:
+
+- lowdb JSON storage;
+- local/network access without auth;
+- manual baseline checks;
+- local llama.cpp server;
+- simple fallbacks when external services are unavailable;
+- best-effort DeckLink compatibility;
+- pragmatic TypeScript and Zod validation.
+
+Do not add unless Karen explicitly asks:
+
+- authentication;
+- users/roles/permissions;
+- complex database replacement;
+- migrations framework;
+- Kubernetes or deployment platform;
+- large Docker orchestration;
+- broad dependency upgrades;
+- observability stack;
+- background job platform;
+- multi-tenant architecture;
+- large rewrites unrelated to the requested task.
+
+When choosing between two valid approaches:
+
+- pick the smaller MVP-safe change;
+- preserve current behavior;
+- document intentional behavior changes;
+- avoid abstractions that do not remove real complexity.

@@ -1,5 +1,5 @@
 ---
-description: Rules for Vasily templates/rundowns/integrations tasks
+description: Rules for Vasily templates/rundowns/control/integrations tasks
 globs:
   - "frontend/src/features/templates/**"
   - "frontend/src/features/rundowns/**"
@@ -14,20 +14,36 @@ globs:
   - "backend/src/integrations/**"
 ---
 
-You are working in Vasily ownership: templates DB, rundowns, channels, and external integrations.
+You are working in Vasily ownership: templates DB, rundowns, channels, control
+workflows, and external integrations.
 
 Allowed by default:
 
-- templates/rundowns/channels backend routes and services;
 - templates/rundowns/control frontend feature modules;
-- Dalet or other integration adapters.
+- `TemplatesPage.tsx` for templates UI composition;
+- `ControlPage.tsx` for templates/rundowns/control UI composition;
+- templates/rundowns/channels backend routes;
+- integration adapters under `backend/src/integrations/**`.
 
 Ask before changing:
 
 - editor internals;
 - renderer/timeline engine;
 - LLM generation pipeline;
+- `shared/**`;
 - `decklink-out/**`;
-- shared schemas unless the task is explicitly about contracts.
+- repo scripts, CI, package config, or Cursor rules.
 
-Keep external integrations behind adapters under `backend/src/integrations/**`.
+Keep external integrations behind adapters under:
+
+- `backend/src/integrations/**`
+
+Do not:
+
+- place large API/fetch logic directly in pages;
+- change WebSocket command shape without a contract discussion;
+- change template/rundown schemas casually;
+- refactor editor/backend core while implementing templates or rundowns.
+
+If a task needs shared schema changes, stop and explain the contract impact
+before editing.

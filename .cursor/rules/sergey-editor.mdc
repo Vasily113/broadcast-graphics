@@ -24,10 +24,21 @@ Allowed by default:
 Ask before changing:
 
 - `shared/**`
-- `frontend/src/core/renderer.ts`
-- `frontend/src/core/timeline.ts`
-- `frontend/src/pages/ControlPage.tsx`
 - `backend/**`
 - `decklink-out/**`
+- `frontend/src/core/renderer.ts`
+- `frontend/src/core/timeline.ts`
+- `frontend/src/core/store.ts` when the change is not strictly editor-local
+- `frontend/src/pages/ControlPage.tsx`
+- `frontend/src/pages/TemplatesPage.tsx`
+- API clients outside editor scope
 
-If a task needs schema/protocol changes, stop and explain the needed contract change before editing.
+Do not:
+
+- change shared schemas while implementing editor UI;
+- change API/WS protocol without a contract discussion;
+- refactor unrelated pages;
+- edit repo scripts, CI, package config, or Cursor rules.
+
+If the task needs schema/protocol/backend changes, stop and explain the needed
+contract change before editing.

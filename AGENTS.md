@@ -1,56 +1,40 @@
-# Broadcast Graphics Team And Agent Rules
+# Broadcast Graphics: Правила Команды И Агентов
 
-This project is an MVP. The priority is working product behavior for demo:
-template editor, templates DB, rundowns, control panel, browser renderer, uploads,
-settings/channels, and best-effort DeckLink compatibility.
+Этот файл читают люди и Cursor Agent. Он описывает роли, зоны ответственности и
+правила поведения для разработки MVP.
 
-Do not add production-only complexity unless the team lead explicitly asks for it:
-no auth, no complex database migration, no large deployment platform.
+## Главный Контекст
 
-## Current Team Roles
+Broadcast Graphics — MVP для эфирной графики. Приоритет:
 
-### Sergey: Template Editor
+- рабочий template editor;
+- templates DB;
+- rundowns;
+- control panel;
+- browser renderer;
+- uploads;
+- settings/channels;
+- best-effort DeckLink compatibility;
+- LLM template generation.
 
-Primary ownership:
+Главное условие: после изменений проект должен запускаться, а текущие
+baseline-сценарии должны продолжать работать.
 
-- `frontend/src/features/editor/**`
-- `frontend/src/pages/EditorPage.tsx`
-- editor UI, layers, properties, variables, timeline UI, canvas interactions
+Не добавлять production-only сложность без явного решения Карена:
 
-Ask before changing:
+- auth/users/roles;
+- сложную БД;
+- Kubernetes/Docker platform;
+- большие dependency upgrades;
+- broad rewrite без baseline-проверки.
 
-- `shared/**`
-- `frontend/src/core/renderer.ts`
-- `frontend/src/core/timeline.ts`
-- backend routes/services
-- `decklink-out/**`
+## Текущие Роли
 
-### Vasily: Templates, Rundowns, External Integrations
+### Карен: Team Lead, Architecture, Backend, Shared, LLM
 
-Primary ownership:
+Карен — тимлид и владелец foundation-ветки `karen`.
 
-- `frontend/src/features/templates/**`
-- `frontend/src/features/rundowns/**`
-- `frontend/src/features/control/**`
-- `frontend/src/pages/TemplatesPage.tsx`
-- `frontend/src/pages/ControlPage.tsx` only for templates/rundowns/control UI
-- `backend/src/routes/templates.ts`
-- `backend/src/routes/rundowns.ts`
-- `backend/src/routes/channels.ts`
-- `backend/src/services/templates/**`
-- `backend/src/services/rundowns/**`
-- `backend/src/integrations/**`
-
-Ask before changing:
-
-- editor internals
-- renderer/timeline engine
-- LLM pipeline
-- `decklink-out/**`
-
-### Team Lead: Architecture, Backend Core, Shared Contracts, LLM
-
-Primary ownership:
+Основная зона:
 
 - `backend/src/index.ts`
 - `backend/src/ws/**`
@@ -60,35 +44,107 @@ Primary ownership:
 - repo scripts and workflow files
 - `.cursor/rules/**`
 - `AGENTS.md`
+- `SPEC.md`
+- `docs/ARCHITECTURE.md`
+- `docs/CONTRACTS.md`
 - GitHub Actions and PR process
 
-## Agent Behavior Rules
+Карен принимает решения по:
 
-- Start by reading the relevant files before editing.
-- Keep changes inside the requested product zone.
-- If a task requires files outside the zone, stop and explain why before editing.
-- Do not silently change shared schemas or API/WS protocol.
-- Do not mix refactor and feature work unless the user explicitly asks for a foundation refactor.
-- Do not commit or push unless explicitly asked.
-- Do not edit the plan file unless explicitly asked.
-- Preserve the baseline behavior from `docs/baseline-checklist.md`.
+- architecture boundaries;
+- shared contracts;
+- API/WS protocol;
+- LLM pipeline;
+- branch protection;
+- merge policy;
+- Cursor rules.
+
+### Сергей: Template Editor
+
+Основная зона:
+
+- `frontend/src/features/editor/**`
+- `frontend/src/pages/EditorPage.tsx`
+- editor UI;
+- layers;
+- properties panel;
+- variables panel;
+- timeline UI;
+- canvas interactions.
+
+Перед изменением спросить Карена:
+
+- `shared/**`
+- `frontend/src/core/renderer.ts`
+- `frontend/src/core/timeline.ts`
+- backend routes/services
+- `frontend/src/pages/ControlPage.tsx`
+- `frontend/src/pages/TemplatesPage.tsx`
+- `decklink-out/**`
+
+### Василий: Templates, Rundowns, Control, Integrations
+
+Основная зона:
+
+- `frontend/src/features/templates/**`
+- `frontend/src/features/rundowns/**`
+- `frontend/src/features/control/**`
+- `frontend/src/pages/TemplatesPage.tsx`
+- `frontend/src/pages/ControlPage.tsx` только для templates/rundowns/control UI
+- `backend/src/routes/templates.ts`
+- `backend/src/routes/rundowns.ts`
+- `backend/src/routes/channels.ts`
+- `backend/src/services/templates/**`
+- `backend/src/services/rundowns/**`
+- `backend/src/integrations/**`
+
+Перед изменением спросить Карена:
+
+- editor internals;
+- renderer/timeline engine;
+- LLM pipeline;
+- `shared/**`;
+- `decklink-out/**`;
+- repo scripts/CI/workspaces.
+
+## Общие Правила Агентов
+
+Cursor Agent должен:
+
+- читать релевантные файлы перед изменениями;
+- держать изменения внутри requested product zone;
+- если задача требует чужую зону, остановиться и объяснить почему;
+- не менять shared schemas или API/WS protocol молча;
+- не смешивать refactor и feature work без явного запроса;
+- не коммитить и не пушить без явной просьбы;
+- не редактировать plan files без явного запроса;
+- сохранять baseline из `docs/baseline-checklist.md`;
+- писать project-facing документацию на русском языке;
+- использовать английский для `.cursor/rules`, code identifiers и технических API,
+  где это удобнее.
 
 ## Git Workflow
 
-- `MVP` is the protected integration branch.
-- Work in feature branches:
-  - `feature/sergey/<task>`
-  - `feature/vasily/<task>`
-  - `feature/lead/<task>`
-  - `fix/<owner>/<task>`
-  - `foundation/lead/<task>`
-- Every change goes through PR.
-- Team lead reviews every PR.
-- Prefer squash merge.
+- `MVP` — защищённая интеграционная ветка.
+- `karen` — foundation/team lead ветка Карена.
+- Прямые коммиты в `MVP` запрещены.
+- Все изменения проходят через PR.
+- Карен review-ит каждый PR.
+- Предпочтительный merge method: squash merge.
+
+Рабочие ветки:
+
+- `feature/sergey/<task>`
+- `feature/vasily/<task>`
+- `feature/lead/<task>`
+- `fix/<owner>/<task>`
+
+Пока `karen` не влита в `MVP`, feature-ветки можно создавать от `karen`. После
+merge foundation в `MVP` новые задачи создавать от `MVP`.
 
 ## Required Local Checks
 
-Before opening or merging a PR:
+Перед PR:
 
 ```bash
 npm install
@@ -97,46 +153,62 @@ npm run build
 ./start.sh
 ```
 
-For foundation-level changes, also run the manual scenarios in:
+Для foundation-level или demo-critical изменений дополнительно пройти:
 
-```bash
+```text
 docs/baseline-checklist.md
 ```
 
 ## Shared Contracts
 
-Shared contracts live in `shared/src/**`.
+Shared contracts живут в:
 
-Use them for:
+```text
+shared/src/**
+```
 
-- template schema
-- timeline schema
-- rundown schema
-- channel schema
-- control WebSocket protocol
-- LLM request/response schema
+Они используются для:
 
-Changing a shared contract requires an explicit note in the PR:
+- template schema;
+- timeline schema;
+- rundown schema;
+- channel/settings schema;
+- control WebSocket protocol;
+- LLM request/response schema.
 
-- what changed;
-- which frontend/backend/renderer code was affected;
-- whether `data/db.json` can be reset;
-- which baseline scenarios were checked.
+Изменение shared contract требует в PR:
+
+- что изменилось;
+- какие frontend/backend/renderer/LLM зоны затронуты;
+- можно ли reset `data/db.json`;
+- какие baseline-сценарии проверены.
 
 ## MVP Constraints
 
-Allowed for MVP:
+Разрешено для MVP:
 
 - lowdb JSON storage;
-- open local/network access without auth;
+- open local/network access без auth;
 - manual baseline checks;
 - local llama.cpp server;
-- simple fallback behavior if LLM is unavailable.
+- simple fallback behavior if LLM is unavailable;
+- best-effort DeckLink compatibility.
 
-Avoid for MVP unless explicitly requested:
+Избегать без явного решения Карена:
 
 - auth and users;
 - complex database;
-- Kubernetes/Docker orchestration;
+- broad deployment platform;
 - broad rewrites without baseline verification;
-- dependency upgrades unrelated to the task.
+- dependency upgrades unrelated to task.
+
+## Документы, Которые Нужно Знать
+
+- `SPEC.md` — карта спецификации.
+- `docs/ARCHITECTURE.md` — архитектурные границы.
+- `docs/DEVELOPMENT.md` — запуск и локальная разработка.
+- `docs/CURSOR_WORKFLOW.md` — как работать с Cursor.
+- `docs/CONTRACTS.md` — API/WS/shared contracts.
+- `docs/DEMO_RUNBOOK.md` — подготовка к демо.
+- `docs/team-process.md` — ветки, PR, review.
+- `docs/baseline-checklist.md` — ручной baseline.

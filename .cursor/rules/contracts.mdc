@@ -4,25 +4,39 @@ globs:
   - "shared/src/**"
   - "backend/src/ws/**"
   - "backend/src/routes/**"
+  - "backend/src/services/llm/**"
   - "frontend/src/features/**/api.ts"
+  - "frontend/src/features/**/types.ts"
+  - "frontend/src/pages/RendererPage.tsx"
+  - "backend/public/renderer.html"
 ---
 
-Shared contracts are the agreement between frontend, backend, renderer, rundowns, control, and LLM.
+Shared contracts are the agreement between frontend, backend, renderer,
+rundowns, control panel, DeckLink wrapper, and LLM.
 
 Important contracts:
 
-- `TemplateSchema`
-- `TimelineSchema`
-- `RundownSchema`
-- `ChannelSchema`
-- `ControlCommandSchema`
-- LLM request/response schemas
+- template schema;
+- timeline schema;
+- rundown schema;
+- channel/settings schema;
+- control WebSocket protocol;
+- HTTP request/response shapes;
+- LLM request/response schemas;
+- `data/db.json` structure.
 
 Rules:
 
 - Do not change shared contracts casually.
-- If a contract changes, update all affected frontend/backend code in the same PR.
+- If a contract changes, update all affected frontend/backend/renderer/LLM code
+  in the same PR.
 - Mention the contract change in the PR summary.
 - State whether existing `data/db.json` can be reset.
 - Run `npm run typecheck` after contract changes.
-- For LLM output, always validate generated JSON against the shared schema before saving.
+- Run `npm run build` after contract changes.
+- For LLM output, always validate generated JSON against the shared schema
+  before saving.
+- Do not hide contract changes inside unrelated UI refactors.
+
+If the requested task does not explicitly include contract work, stop and ask
+before changing `shared/src/**` or WebSocket command shapes.
