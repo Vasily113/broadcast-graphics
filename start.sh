@@ -64,14 +64,13 @@ echo "Backend:  http://localhost:$BACKEND_PORT"
 echo "Frontend: http://localhost:$FRONTEND_PORT"
 echo
 
-if [[ ! -d "$BACKEND_DIR/node_modules" ]]; then
-  echo "Backend dependencies not installed. Run: (cd backend && npm install)"
+if [[ ! -d "$ROOT_DIR/node_modules" ]]; then
+  echo "Dependencies not installed. Run: npm install"
   exit 1
 fi
-if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
-  echo "Frontend dependencies not installed. Run: (cd frontend && npm install)"
-  exit 1
-fi
+
+echo "Building shared contracts and backend..."
+(cd "$ROOT_DIR" && npm run build -w @broadcast-graphics/shared && npm run build -w @broadcast-graphics/backend)
 
 if [[ "${STOP_STALE:-0}" == "1" ]]; then
   "$ROOT_DIR/stop.sh" || true

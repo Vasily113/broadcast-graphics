@@ -12,20 +12,21 @@ import { CSS } from '@dnd-kit/utilities';
 import { Template, Variable } from '../core/schema';
 import { TemplateThumbnail } from '../features/templates/TemplateThumbnail';
 import { generateId } from '../core/id';
-
-type Command =
-  | { type: 'take';   templateId: string; template: Template; variables: Record<string, string>; channelId?: string }
-  | { type: 'clear';  templateId: string; channelId?: string }
-  | { type: 'update'; templateId: string; variables: Record<string, string>; channelId?: string };
-
-interface Channel { id: string; name: string; device_index: number; display_mode: string; keyer_mode: string; }
-
-type WsStatus = 'connecting' | 'connected' | 'disconnected';
-
-interface TemplateListItem { id: string; name: string; updated_at: number; }
-interface FullTemplate extends TemplateListItem { data: Template; }
-interface RundownSlot { slotId: string; templateId: string; name: string; vars: Record<string, string>; }
-interface RundownData { id: string; name: string; slots: RundownSlot[]; channelId: string | null; created_at: number; updated_at: number; }
+import { useControlWs } from '../features/control/useControlWs';
+import type { WsStatus } from '../features/control/types';
+import { getTemplate, listTemplates } from '../features/templates/api';
+import type { FullTemplate, TemplateItem as TemplateListItem } from '../features/templates/types';
+import { listChannels } from '../features/channels/api';
+import type { Channel } from '../features/channels/types';
+import {
+  createRundown as apiCreateRundown,
+  deleteRundown as apiDeleteRundown,
+  getOnAir,
+  listRundowns,
+  reorderRundowns,
+  updateRundown,
+} from '../features/rundowns/api';
+import type { RundownData, RundownSlot } from '../features/rundowns/types';
 
 // ── Channel badge / selector ──────────────────────────────────────────────────
 
@@ -131,36 +132,6 @@ function ControlVideoField({ value, onChange }: { value: string; onChange: (url:
   );
 }
 
-// ── WebSocket hook ────────────────────────────────────────────────────────────
-
-function useControlWs() {
-  const wsRef = useRef<WebSocket | null>(null);
-  const [status, setStatus] = useState<WsStatus>('disconnected');
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/control`);
-    wsRef.current = ws;
-    setStatus('connecting');
-    ws.onopen = () => setStatus('connected');
-    ws.onclose = () => { setStatus('disconnected'); reconnectTimer.current = setTimeout(connect, 3000); };
-    ws.onerror = () => ws.close();
-  }, []);
-
-  useEffect(() => {
-    connect();
-    return () => { reconnectTimer.current && clearTimeout(reconnectTimer.current); wsRef.current?.close(); };
-  }, [connect]);
-
-  const send = useCallback((cmd: Command) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify(cmd));
-  }, []);
-
-  return { status, send, reconnect: connect };
-}
-
 // ── Status badge ─────────────────────────────────────────────────────────────
 
 function WsStatusBadge({ status, onReconnect }: { status: WsStatus; onReconnect: () => void }) {
@@ -209,8 +180,7 @@ function TemplateCard({
     if (full) return full;
     setLoading(true);
     try {
-      const r = await fetch(`/api/templates/${item.id}`);
-      const row: FullTemplate = await r.json();
+      const row = await getTemplate(item.id);
       setFull(row);
       const defaults: Record<string, string> = {};
       (row.data?.variables ?? []).forEach((v: Variable) => { defaults[v.id] = String(v.defaultValue ?? ''); });
@@ -633,8 +603,7 @@ export function ControlPage() {
 
   // ── Template tab state ──────────────────────────────────────────────────
   const handleTake = useCallback(async (id: string, vars: Record<string, string>) => {
-    const r = await fetch(`/api/templates/${id}`);
-    const fresh = await r.json();
+    const fresh = await getTemplate(id);
     setFullCache((s) => ({ ...s, [id]: fresh }));
     send({ type: 'take', templateId: id, template: fresh.data, variables: vars, channelId: tmplChannelId ?? undefined });
     setOnAirSet((s) => new Set(s).add(id));
@@ -650,11 +619,11 @@ export function ControlPage() {
   }, [send, tmplChannelId]);
 
   useEffect(() => {
-    fetch('/api/templates').then((r) => r.json()).then(setTemplates);
+    listTemplates().then(setTemplates);
   }, []);
 
   useEffect(() => {
-    fetch('/api/channels').then(r => r.json()).then((list: Channel[]) => {
+    listChannels().then((list: Channel[]) => {
       setChannels(list);
       if (list.length > 0) setTmplChannelId(prev => prev ?? list[0].id);
     });
@@ -686,8 +655,8 @@ export function ControlPage() {
   useEffect(() => {
     setLoadingRundowns(true);
     Promise.all([
-      fetch('/api/rundowns').then(r => r.json()),
-      fetch('/api/onair').then(r => r.json()).catch(() => ({})),
+      listRundowns(),
+      getOnAir().catch(() => ({})),
     ])
       .then(async ([list, onAirData]: [RundownData[], Record<string, string[]>]) => {
         // Restore on-air IDs from backend state
@@ -696,12 +665,7 @@ export function ControlPage() {
 
         if (list.length === 0) {
           // Auto-create first rundown
-          const r = await fetch('/api/rundowns', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: 'Rundown 1', slots: [] }),
-          });
-          const created: RundownData = await r.json();
+          const created = await apiCreateRundown({ name: 'Rundown 1', slots: [] });
           setRundowns([created]);
           setActiveRundownId(created.id);
         } else {
@@ -725,11 +689,7 @@ export function ControlPage() {
     saveTimerRef.current = setTimeout(async () => {
       const rd = rundowns.find(r => r.id === activeRundownId);
       if (!rd) return;
-      await fetch(`/api/rundowns/${activeRundownId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: rd.name, slots: rd.slots }),
-      });
+      await updateRundown(activeRundownId, { name: rd.name, slots: rd.slots });
     }, 500);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rundowns, activeRundownId]);
@@ -737,19 +697,14 @@ export function ControlPage() {
   // ── Rundown CRUD actions ────────────────────────────────────────────────
   const createRundown = useCallback(async () => {
     const name = `Rundown ${rundowns.length + 1}`;
-    const r = await fetch('/api/rundowns', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, slots: [] }),
-    });
-    const created: RundownData = await r.json();
+    const created = await apiCreateRundown({ name, slots: [] });
     setRundowns(prev => [created, ...prev]);
     setActiveRundownId(created.id);
   }, [rundowns.length]);
 
   const deleteRundown = useCallback(async (id: string) => {
     if (rundowns.length <= 1) return;
-    await fetch(`/api/rundowns/${id}`, { method: 'DELETE' });
+    await apiDeleteRundown(id);
     setRundowns(prev => {
       const next = prev.filter(r => r.id !== id);
       if (activeRundownId === id) setActiveRundownId(next[0]?.id ?? null);
@@ -760,15 +715,10 @@ export function ControlPage() {
   const duplicateRundown = useCallback(async (id: string) => {
     const src = rundowns.find(r => r.id === id);
     if (!src) return;
-    const r = await fetch('/api/rundowns', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: src.name + ' (копия)',
-        slots: src.slots.map(s => ({ ...s, slotId: generateId() })),
-      }),
+    const created = await apiCreateRundown({
+      name: src.name + ' (копия)',
+      slots: src.slots.map(s => ({ ...s, slotId: generateId() })),
     });
-    const created: RundownData = await r.json();
     setRundowns(prev => [created, ...prev]);
     setActiveRundownId(created.id);
   }, [rundowns]);
@@ -776,11 +726,7 @@ export function ControlPage() {
   const commitRename = useCallback(async (id: string) => {
     const trimmed = renameVal.trim();
     if (!trimmed) { setRenamingId(null); return; }
-    await fetch(`/api/rundowns/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: trimmed }),
-    });
+    await updateRundown(id, { name: trimmed });
     setRundowns(prev => prev.map(r => r.id === id ? { ...r, name: trimmed } : r));
     setRenamingId(null);
   }, [renameVal]);
@@ -801,15 +747,10 @@ export function ControlPage() {
     try {
       const text = await file.text();
       const data = JSON.parse(text) as Partial<RundownData>;
-      const r = await fetch('/api/rundowns', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: data.name ?? 'Импортированный rundown',
-          slots: (data.slots ?? []).map(s => ({ ...s, slotId: generateId() })),
-        }),
+      const created = await apiCreateRundown({
+        name: data.name ?? 'Импортированный rundown',
+        slots: (data.slots ?? []).map(s => ({ ...s, slotId: generateId() })),
       });
-      const created: RundownData = await r.json();
       setRundowns(prev => [created, ...prev]);
       setActiveRundownId(created.id);
     } catch (err) {
@@ -845,8 +786,7 @@ export function ControlPage() {
 
   const rdFetchTemplate = useCallback(async (templateId: string): Promise<FullTemplate> => {
     if (fullCache[templateId]) return fullCache[templateId];
-    const r = await fetch(`/api/templates/${templateId}`);
-    const data = await r.json();
+    const data = await getTemplate(templateId);
     setFullCache((s) => ({ ...s, [templateId]: data }));
     return data;
   }, [fullCache]);
@@ -895,18 +835,13 @@ export function ControlPage() {
 
   const setRundownChannel = useCallback((id: string, channelId: string | null) => {
     setRundowns(prev => prev.map(r => r.id === id ? { ...r, channelId } : r));
-    fetch(`/api/rundowns/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ channelId }),
-    });
+    updateRundown(id, { channelId });
   }, []);
 
   const rdTakeAt = useCallback(async (index: number) => {
     if (index < 0 || index >= rundown.length) return;
     const slot = rundown[index];
-    const r = await fetch(`/api/templates/${slot.templateId}`);
-    const full: FullTemplate = await r.json();
+    const full = await getTemplate(slot.templateId);
     setFullCache((s) => ({ ...s, [slot.templateId]: full }));
     const vars: Record<string, string> = {};
     (full.data?.variables ?? []).forEach((v: Variable) => {
@@ -1019,11 +954,7 @@ export function ControlPage() {
       const to   = prev.findIndex(r => r.id === over.id);
       if (from === -1 || to === -1) return prev;
       const next = arrayMove(prev, from, to);
-      fetch('/api/rundowns/reorder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: next.map(r => r.id) }),
-      });
+      reorderRundowns(next.map(r => r.id));
       return next;
     });
   }, []);

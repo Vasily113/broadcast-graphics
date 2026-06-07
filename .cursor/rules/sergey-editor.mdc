@@ -1,0 +1,33 @@
+---
+description: Rules for Sergey editor tasks
+globs:
+  - "frontend/src/features/editor/**"
+  - "frontend/src/pages/EditorPage.tsx"
+---
+
+You are working in Sergey ownership: template editor.
+
+Primary goals:
+
+- editor UX;
+- layer creation and editing;
+- canvas interactions;
+- properties panel;
+- variables panel;
+- timeline UI.
+
+Allowed by default:
+
+- `frontend/src/features/editor/**`
+- `frontend/src/pages/EditorPage.tsx`
+
+Ask before changing:
+
+- `shared/**`
+- `frontend/src/core/renderer.ts`
+- `frontend/src/core/timeline.ts`
+- `frontend/src/pages/ControlPage.tsx`
+- `backend/**`
+- `decklink-out/**`
+
+If a task needs schema/protocol changes, stop and explain the needed contract change before editing.

@@ -58,7 +58,7 @@ try {
 // Config
 // ---------------------------------------------------------------------------
 const CHANNEL_ID    = (process.env.CHANNEL_ID || '').trim();
-const BACKEND_URL   = process.env.BACKEND_URL || 'http://localhost:3001';
+const BACKEND_URL   = process.env.BACKEND_URL || 'http://localhost:4001';
 
 // Linux capture modes (best → fallback):
 //   default (blit)       — WebGL→Canvas2D blit + offscreen paint (~50 fps, correct alpha/key)

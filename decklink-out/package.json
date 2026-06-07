@@ -1,5 +1,5 @@
 {
-  "name": "decklink-out",
+  "name": "@broadcast-graphics/decklink-out",
   "version": "1.0.0",
   "description": "Broadcast-graphics DeckLink SDI output — 1080p50 Fill+Key",
   "main": "src/main.js",

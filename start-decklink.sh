@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DECKLINK_DIR="$ROOT_DIR/decklink-out"
-BACKEND_URL="${BACKEND_URL:-http://localhost:3001}"
+BACKEND_URL="${BACKEND_URL:-http://localhost:4001}"
 
 ADDON_PATH="$DECKLINK_DIR/addon/build/Release/decklink.node"
 PROFILE_RESTART_DELAY="${PROFILE_RESTART_DELAY:-6}"

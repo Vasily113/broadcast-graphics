@@ -1,0 +1,29 @@
+---
+description: General Broadcast Graphics project rules
+alwaysApply: true
+---
+
+This repository is an MVP for broadcast graphics. Preserve working behavior over theoretical production hardening.
+
+Follow these rules:
+
+- Respond and document project-facing guidance in Russian unless source code naming requires English.
+- Read relevant files before editing.
+- Keep changes scoped to the requested product zone.
+- If you need to edit outside the current owner zone, explain why and ask before proceeding.
+- Do not add auth, complex DB, deployment platform, or large dependency upgrades unless explicitly requested.
+- Do not edit plan files unless explicitly requested.
+- Do not commit or push unless explicitly requested.
+- Preserve the manual baseline in `docs/baseline-checklist.md`.
+
+Current product zones:
+
+- Sergey: `frontend/src/features/editor/**`, editor UI and editor interactions.
+- Vasily: templates, rundowns, external integrations, control UI around templates/rundowns.
+- Team lead: backend core, shared contracts, LLM, repo process, architecture.
+
+Before PR:
+
+- `npm run typecheck`
+- `npm run build`
+- manual startup via `./start.sh`

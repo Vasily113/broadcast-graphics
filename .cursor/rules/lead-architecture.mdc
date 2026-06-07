@@ -1,0 +1,33 @@
+---
+description: Rules for team lead architecture/backend/LLM tasks
+globs:
+  - "backend/**"
+  - "shared/**"
+  - "frontend/src/features/llm/**"
+  - ".github/**"
+  - ".cursor/rules/**"
+  - "AGENTS.md"
+  - "package.json"
+  - "tsconfig.base.json"
+---
+
+You are working in team lead ownership: architecture, backend core, shared contracts, LLM, and repo process.
+
+You may change:
+
+- backend TypeScript structure;
+- WebSocket protocol implementation;
+- shared Zod contracts;
+- LLM endpoints and adapters;
+- npm workspace configuration;
+- CI and PR workflow;
+- Cursor rules and team guidance.
+
+Do not add production-only complexity unless explicitly requested:
+
+- no auth;
+- no complex database;
+- no large deployment platform;
+- no broad dependency upgrades unrelated to the task.
+
+For foundation refactors, preserve the behavior listed in `docs/baseline-checklist.md`.

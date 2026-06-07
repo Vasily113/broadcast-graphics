@@ -1,0 +1,28 @@
+---
+description: Rules for shared contracts and API/WS schemas
+globs:
+  - "shared/src/**"
+  - "backend/src/ws/**"
+  - "backend/src/routes/**"
+  - "frontend/src/features/**/api.ts"
+---
+
+Shared contracts are the agreement between frontend, backend, renderer, rundowns, control, and LLM.
+
+Important contracts:
+
+- `TemplateSchema`
+- `TimelineSchema`
+- `RundownSchema`
+- `ChannelSchema`
+- `ControlCommandSchema`
+- LLM request/response schemas
+
+Rules:
+
+- Do not change shared contracts casually.
+- If a contract changes, update all affected frontend/backend code in the same PR.
+- Mention the contract change in the PR summary.
+- State whether existing `data/db.json` can be reset.
+- Run `npm run typecheck` after contract changes.
+- For LLM output, always validate generated JSON against the shared schema before saving.

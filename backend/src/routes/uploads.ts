@@ -14,12 +14,12 @@ const storage = multer.diskStorage({
   },
 });
 
-const ALLOWED = (mime) =>
+const ALLOWED = (mime: string) =>
   mime.startsWith('image/') || mime === 'video/webm' || mime === 'video/mp4';
 
 const upload = multer({
   storage,
-  limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB for video
+  limits: { fileSize: 200 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (ALLOWED(file.mimetype)) cb(null, true);
     else cb(new Error('Only images and WebM/MP4 video allowed'));
@@ -30,5 +30,5 @@ export const uploadsRouter = Router();
 
 uploadsRouter.post('/', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
-  res.json({ url: `/uploads/${req.file.filename}` });
+  return res.json({ url: `/uploads/${req.file.filename}` });
 });

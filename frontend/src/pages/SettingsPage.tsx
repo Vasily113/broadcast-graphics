@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Settings, Plus, Trash2, Copy, Check, RefreshCw } from 'lucide-react';
+import { createChannel as apiCreateChannel, deleteChannel as apiDeleteChannel, listChannels, updateChannel } from '../features/channels/api';
+import type { Channel } from '../features/channels/types';
 
 // ── Display modes ─────────────────────────────────────────────────────────────
 const DISPLAY_MODES = [
@@ -28,16 +30,6 @@ export const CHANNEL_COLORS = [
   '#6366f1', '#0ea5e9', '#10b981', '#f59e0b',
   '#ef4444', '#a855f7', '#ec4899', '#14b8a6',
 ];
-
-interface Channel {
-  id: string;
-  name: string;
-  device_index: number;
-  display_mode: string;
-  keyer_mode: string;
-  show_fps: boolean;
-  created_at: number;
-}
 
 // ── Copy button ───────────────────────────────────────────────────────────────
 function CopyButton({ text }: { text: string }) {
@@ -73,8 +65,7 @@ export function SettingsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch('/api/channels');
-      setChannels(await r.json());
+      setChannels(await listChannels());
     } finally {
       setLoading(false);
     }
@@ -85,15 +76,10 @@ export function SettingsPage() {
   const createChannel = async () => {
     setCreating(true);
     try {
-      const r = await fetch('/api/channels', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: `Channel ${channels.length + 1}`,
-          device_index: -1,
-        }),
+      const ch = await apiCreateChannel({
+        name: `Channel ${channels.length + 1}`,
+        device_index: -1,
       });
-      const ch: Channel = await r.json();
       setChannels(prev => [...prev, ch]);
     } finally {
       setCreating(false);
@@ -101,7 +87,7 @@ export function SettingsPage() {
   };
 
   const deleteChannel = async (id: string) => {
-    await fetch(`/api/channels/${id}`, { method: 'DELETE' });
+    await apiDeleteChannel(id);
     setChannels(prev => prev.filter(c => c.id !== id));
   };
 
@@ -113,11 +99,7 @@ export function SettingsPage() {
     setChannels(prev => prev.map(c => c.id === id ? { ...c, [field]: value } : c));
     saveTimers.current[id] && clearTimeout(saveTimers.current[id]);
     saveTimers.current[id] = setTimeout(async () => {
-      await fetch(`/api/channels/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [field]: value }),
-      });
+      await updateChannel(id, { [field]: value });
     }, 600);
   };
 
