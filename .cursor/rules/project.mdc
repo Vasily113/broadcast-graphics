@@ -1,0 +1,52 @@
+---
+description: General Broadcast Graphics project rules
+alwaysApply: true
+---
+
+Broadcast Graphics is an MVP for broadcast graphics. Preserve working demo
+behavior over theoretical production hardening.
+
+Read before significant work:
+
+- `AGENTS.md`
+- `SPEC.md`
+- `docs/ARCHITECTURE.md`
+- `docs/CURSOR_WORKFLOW.md`
+- `docs/CONTRACTS.md` when API/WS/schema changes are involved
+- `docs/baseline-checklist.md` when behavior can be affected
+
+Core rules:
+
+- Respond to the user in Russian.
+- Write human-facing project documentation in Russian.
+- Keep `.cursor/rules/*.mdc` concise and directive.
+- Read relevant files before editing.
+- Keep changes scoped to the requested owner zone.
+- If a task needs edits outside the owner zone, stop and ask before proceeding.
+- Do not silently change shared schemas, API shapes, or WebSocket protocol.
+- Do not mix feature work and broad refactoring unless explicitly requested.
+- Do not add auth, complex DB, deployment platform, or broad dependency upgrades
+  unless Karen explicitly asks.
+- Do not edit plan files unless explicitly requested.
+- Do not commit or push unless explicitly requested.
+- Preserve the baseline in `docs/baseline-checklist.md`.
+
+Current owner zones:
+
+- Karen: architecture, backend core, shared contracts, LLM, repo process, docs, CI.
+- Sergey: template editor, editor UI, canvas interactions, layer properties, variables, timeline UI.
+- Vasily: templates, rundowns, control workflows, channels, external integrations.
+
+Branch rules:
+
+- `MVP` is the protected integration branch.
+- `karen` is Karen's foundation/team lead branch.
+- Feature branches should be short-lived and owner-prefixed.
+- All changes go through PR review by Karen before merging to `MVP`.
+
+Before PR:
+
+- `npm run typecheck`
+- `npm run build`
+- manual startup via `./start.sh`
+- relevant manual scenario from `docs/baseline-checklist.md`

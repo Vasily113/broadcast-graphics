@@ -2,19 +2,22 @@ import { useState } from 'react';
 import { Plus, Trash2, ChevronDown, ChevronRight, Pencil } from 'lucide-react';
 import { useEditorStore } from '../../core/store';
 import { Variable } from '../../core/schema';
+import { generateId } from '../../core/id';
 
 const TYPE_LABELS: Record<Variable['type'], string> = {
-  text: 'Текст',
+  text:  'Текст',
   image: 'Изображение',
   number: 'Число',
   color: 'Цвет',
+  video: 'Видео',
 };
 
 const TYPE_COLORS: Record<Variable['type'], string> = {
-  text: 'text-blue-400',
+  text:  'text-blue-400',
   image: 'text-green-400',
   number: 'text-yellow-400',
   color: 'text-pink-400',
+  video: 'text-purple-400',
 };
 
 const EMPTY_FORM: Partial<Variable> = { name: '', label: '', type: 'text', defaultValue: '' };
@@ -140,7 +143,7 @@ export function VariablesPanel() {
               submitLabel="Добавить"
               onSubmit={(form) => {
                 addVariable({
-                  id: crypto.randomUUID(),
+                  id: generateId(),
                   name: form.name!,
                   label: form.label?.trim() || form.name!,
                   type: (form.type as Variable['type']) ?? 'text',

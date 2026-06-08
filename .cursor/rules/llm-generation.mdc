@@ -1,0 +1,32 @@
+---
+description: LLM template generation rules
+globs:
+  - "backend/src/services/llm/**"
+  - "backend/src/routes/llm.ts"
+  - "frontend/src/features/llm/**"
+  - "shared/src/llm/**"
+  - "shared/src/template/**"
+---
+
+LLM is a helper, not the source of truth. Generated content must be validated
+before it becomes a saved template.
+
+Rules:
+
+- Keep llama.cpp behind an adapter/service.
+- Do not hard-code the app to a single provider if a small adapter keeps it flexible.
+- Always validate generated template JSON against shared schemas before saving.
+- Keep deterministic fallback behavior when llama.cpp is unavailable.
+- Do not let LLM failures break Templates page, Editor, or manual template creation.
+- Keep prompts and response parsing close to the LLM service.
+- Keep frontend LLM UI isolated under `frontend/src/features/llm/**`.
+- Do not store raw unvalidated LLM output in `data/db.json`.
+- Do not add cloud LLM dependencies unless Karen explicitly asks.
+
+If changing the LLM response contract:
+
+- update `shared/src/llm/schema.ts`;
+- update backend validation;
+- update frontend API/client code;
+- mention the contract change in the PR;
+- run `npm run typecheck` and `npm run build`.

@@ -1,0 +1,48 @@
+---
+description: Demo-critical safety rules
+globs:
+  - "start.sh"
+  - "stop.sh"
+  - "start-decklink.sh"
+  - "frontend/src/pages/ControlPage.tsx"
+  - "frontend/src/pages/RendererPage.tsx"
+  - "frontend/src/pages/TemplatesPage.tsx"
+  - "frontend/src/pages/SettingsPage.tsx"
+  - "backend/src/ws/**"
+  - "backend/src/routes/**"
+  - "backend/public/**"
+  - "decklink-out/**"
+---
+
+Protect demo-critical flows.
+
+Demo-critical flows:
+
+- startup via `./start.sh`;
+- shutdown via `./stop.sh`;
+- templates list/create/edit/delete;
+- editor save/reload;
+- control TAKE/CLEAR/UPDATE;
+- browser renderer;
+- settings/channels;
+- rundowns;
+- uploads;
+- LLM fallback;
+- DeckLink best-effort behavior.
+
+Rules:
+
+- Do not change default ports without explicit request.
+- Do not break `./start.sh` or `./stop.sh`.
+- Do not change WebSocket command behavior without checking control and renderer.
+- Do not remove browser renderer fallback.
+- Do not make LLM or DeckLink mandatory for normal app usage.
+- Do not hide startup failures.
+- Keep error messages actionable for demo operators.
+
+After touching demo-critical code, run or ask to run:
+
+- `npm run typecheck`
+- `npm run build`
+- `./start.sh`
+- relevant manual scenario from `docs/baseline-checklist.md`

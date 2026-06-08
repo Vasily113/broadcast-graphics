@@ -1,15 +1,23 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const backendPort = Number(process.env.BACKEND_PORT) || 4001;
+const backendOrigin = process.env.BACKEND_ORIGIN || `http://localhost:${backendPort}`;
+
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 3000,
+    host: true,
+    port: 4000,
+    strictPort: true,
     proxy: {
-      '/api': 'http://localhost:3001',
-      '/uploads': 'http://localhost:3001',
-      '/renderer.html': 'http://localhost:3001',
-      '/ws': { target: 'ws://localhost:3001', ws: true }
+      '/api': backendOrigin,
+      '/uploads': backendOrigin,
+      '/renderer.html': backendOrigin,
+      '/pixi.min.js': backendOrigin,
+      '/gsap.min.js': backendOrigin,
+      '/timeline-runtime.js': backendOrigin,
+      '/ws': { target: backendOrigin.replace('http://', 'ws://').replace('https://', 'wss://'), ws: true }
     }
   }
 });

@@ -1,4 +1,46 @@
 node_modules/
 data/db.json
+data/uploads/
 dist/
 .env
+
+# OS / editor
+.DS_Store
+.vscode/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Builds / caches
+coverage/
+.cache/
+.parcel-cache/
+
+# Frontend build
+frontend/dist/
+
+# Vite / TS
+frontend/.vite/
+frontend/tsconfig.tsbuildinfo
+
+# Electron / native addon build outputs
+decklink-out/addon/build/
+decklink-out/addon/Release/
+decklink-out/addon/Debug/
+decklink-out/addon/*.node
+decklink-out/addon/**/*.node
+decklink-out/addon/**/*.pdb
+decklink-out/addon/**/*.ipdb
+decklink-out/addon/**/*.iobj
+decklink-out/addon/**/*.obj
+decklink-out/addon/**/*.lib
+decklink-out/addon/**/*.exp
+decklink-out/addon/**/*.tlog
+decklink-out/addon/bmd-sdk/
+
+# Worktrees / agent artifacts (local)
+.claude/worktrees/

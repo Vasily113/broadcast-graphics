@@ -1,0 +1,30 @@
+---
+description: Frontend feature module structure rules
+globs:
+  - "frontend/src/features/**"
+  - "frontend/src/pages/**"
+  - "frontend/src/core/**"
+---
+
+Keep frontend pages thin and feature modules explicit.
+
+Preferred structure:
+
+- feature UI/components: `frontend/src/features/<feature>/**`
+- feature API client: `frontend/src/features/<feature>/api.ts`
+- feature local types: `frontend/src/features/<feature>/types.ts`
+- shared frontend utilities: `frontend/src/core/**`
+- route-level composition: `frontend/src/pages/**`
+
+Rules:
+
+- Do not put large fetch blocks directly in page components.
+- Do not duplicate API calls across pages; add or reuse a feature API client.
+- Do not turn `TemplatesPage.tsx`, `ControlPage.tsx`, or `EditorPage.tsx` back
+  into large mixed-responsibility modules.
+- Keep editor state separate from control/rundown state.
+- Keep renderer/timeline engine changes separate from normal UI changes.
+- Prefer small feature components over broad page rewrites.
+
+If a page grows because of new behavior, extract the behavior into the owning
+feature directory instead of adding another large inline block.

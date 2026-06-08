@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { TemplateRenderer } from '../core/renderer';
 import { Template } from '../core/schema';
+import { hasAnyTimelineKeys, prepareTemplateForRender } from '../core/timeline';
 
 type Command =
   | { type: 'take'; templateId: string; template: Template; variables: Record<string, string> }
@@ -57,8 +58,12 @@ export function RendererPage() {
           return;
         }
 
-        renderer.syncTemplate(cmd.template, cmd.variables);
-        renderer.playIn(cmd.template);
+        const vars = cmd.variables || {};
+        const renderTemplate = prepareTemplateForRender(cmd.template, 0);
+        renderer.syncTemplate(renderTemplate, vars);
+        if (hasAnyTimelineKeys(cmd.template.timeline)) {
+          renderer.playTimeline(cmd.template, vars);
+        }
 
         activeRef.current.set(cmd.templateId, { renderer, canvas, template: cmd.template });
         setActiveCount(activeRef.current.size);
@@ -72,25 +77,29 @@ export function RendererPage() {
         activeRef.current.delete(cmd.templateId);
         setActiveCount(activeRef.current.size);
 
-        entry.renderer.playOut(entry.template, () => {
-          entry.renderer.destroy();
-          entry.canvas.remove();
-        });
+        entry.renderer.destroy();
+        entry.canvas.remove();
       }
 
       if (cmd.type === 'update') {
         const entry = activeRef.current.get(cmd.templateId);
         if (!entry) return;
-        entry.renderer.syncTemplate(entry.template, cmd.variables);
+        entry.renderer.syncTemplate(
+          prepareTemplateForRender(entry.template, 0),
+          cmd.variables,
+        );
       }
     };
 
     const connect = () => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       // ?backend=host:port lets OBS connect directly, bypassing the Vite proxy
-      const backendParam = new URLSearchParams(window.location.search).get('backend');
+      const params = new URLSearchParams(window.location.search);
+      const backendParam = params.get('backend');
+      const channelParam = params.get('channel');
       const host = backendParam ?? window.location.host;
-      const ws = new WebSocket(`${protocol}//${host}/ws/renderer`);
+      const channelQuery = channelParam ? `?channel=${encodeURIComponent(channelParam)}` : '';
+      const ws = new WebSocket(`${protocol}//${host}/ws/renderer${channelQuery}`);
       wsRef.current = ws;
       setStatus('connecting');
 
@@ -123,9 +132,18 @@ export function RendererPage() {
 
   return (
     <div
-      ref={containerRef}
-      style={{ position: 'fixed', inset: 0, background: 'transparent', overflow: 'hidden' }}
+      style={{ position: 'fixed', inset: 0, background: 'transparent', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
     >
+      <div
+        ref={containerRef}
+        style={{
+          position: 'relative',
+          width: 'min(100vw, calc(100vh * 16 / 9))',
+          height: 'min(100vh, calc(100vw * 9 / 16))',
+          aspectRatio: '16 / 9',
+          overflow: 'hidden',
+        }}
+      />
       {/* Dev HUD — only in development build */}
       {import.meta.env.DEV && (
         <div style={{

@@ -1,0 +1,21 @@
+{
+  "name": "broadcast-graphics",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend",
+    "shared",
+    "decklink-out"
+  ],
+  "scripts": {
+    "dev": "./start.sh",
+    "stop": "./stop.sh",
+    "build": "npm run build -w @broadcast-graphics/shared && npm run build -w @broadcast-graphics/backend && npm run build -w @broadcast-graphics/frontend",
+    "typecheck": "npm run typecheck -w @broadcast-graphics/shared && npm run typecheck -w @broadcast-graphics/backend && npm run typecheck -w @broadcast-graphics/frontend",
+    "check": "npm run typecheck && npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

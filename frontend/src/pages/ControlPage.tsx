@@ -2,53 +2,134 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Tv, RefreshCw, ChevronDown, ChevronRight, Zap,
-  GripVertical, Plus, X, SkipBack, SkipForward, Square, List, Layers, Monitor,
+  GripVertical, Plus, X, SkipBack, SkipForward, Square, List, Layers, Monitor, Upload,
+  FileDown, FileUp, Copy, Pencil, Trash2, Check, Settings,
 } from 'lucide-react';
+import { CHANNEL_COLORS } from './SettingsPage';
 import { DndContext, DragEndEvent, closestCenter } from '@dnd-kit/core';
-import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Template, Variable } from '../core/schema';
 import { TemplateThumbnail } from '../features/templates/TemplateThumbnail';
+import { generateId } from '../core/id';
+import { useControlWs } from '../features/control/useControlWs';
+import type { WsStatus } from '../features/control/types';
+import { getTemplate, listTemplates } from '../features/templates/api';
+import type { FullTemplate, TemplateItem as TemplateListItem } from '../features/templates/types';
+import { listChannels } from '../features/channels/api';
+import type { Channel } from '../features/channels/types';
+import {
+  createRundown as apiCreateRundown,
+  deleteRundown as apiDeleteRundown,
+  getOnAir,
+  listRundowns,
+  reorderRundowns,
+  updateRundown,
+} from '../features/rundowns/api';
+import type { RundownData, RundownSlot } from '../features/rundowns/types';
 
-type Command =
-  | { type: 'take'; templateId: string; template: Template; variables: Record<string, string> }
-  | { type: 'clear'; templateId: string }
-  | { type: 'update'; templateId: string; variables: Record<string, string> };
+// ── Channel badge / selector ──────────────────────────────────────────────────
 
-type WsStatus = 'connecting' | 'connected' | 'disconnected';
+function ChannelBadge({
+  channels, value, onChange,
+}: { channels: Channel[]; value: string | null; onChange: (id: string | null) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const idx  = channels.findIndex(c => c.id === value);
+  const ch   = idx >= 0 ? channels[idx] : null;
+  const color = ch ? CHANNEL_COLORS[idx % CHANNEL_COLORS.length] : '#4b5563';
 
-interface TemplateListItem { id: string; name: string; updated_at: number; }
-interface FullTemplate extends TemplateListItem { data: Template; }
-interface RundownSlot { slotId: string; templateId: string; name: string; vars: Record<string, string>; }
-
-// ── WebSocket hook ────────────────────────────────────────────────────────────
-
-function useControlWs() {
-  const wsRef = useRef<WebSocket | null>(null);
-  const [status, setStatus] = useState<WsStatus>('disconnected');
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/control`);
-    wsRef.current = ws;
-    setStatus('connecting');
-    ws.onopen = () => setStatus('connected');
-    ws.onclose = () => { setStatus('disconnected'); reconnectTimer.current = setTimeout(connect, 3000); };
-    ws.onerror = () => ws.close();
-  }, []);
-
+  // Close on outside click
   useEffect(() => {
-    connect();
-    return () => { reconnectTimer.current && clearTimeout(reconnectTimer.current); wsRef.current?.close(); };
-  }, [connect]);
+    if (!open) return;
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
 
-  const send = useCallback((cmd: Command) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify(cmd));
-  }, []);
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs bg-surface-700 hover:bg-surface-600 transition-colors"
+      >
+        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
+        <span className="text-white">{ch?.name ?? 'Нет канала'}</span>
+        <ChevronDown size={10} className="text-gray-400" />
+      </button>
+      {open && (
+        <div className="absolute top-full mt-1 left-0 bg-surface-800 border border-surface-600 rounded-lg shadow-xl z-50 min-w-[180px]">
+          <button
+            onClick={() => { onChange(null); setOpen(false); }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-400 hover:bg-surface-700 transition-colors"
+          >
+            <span className="w-2 h-2 rounded-full bg-gray-600 flex-shrink-0" />
+            Нет канала
+          </button>
+          {channels.map((c, i) => (
+            <button
+              key={c.id}
+              onClick={() => { onChange(c.id); setOpen(false); }}
+              className={`w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-surface-700 transition-colors ${c.id === value ? 'text-white' : 'text-gray-300'}`}
+            >
+              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: CHANNEL_COLORS[i % CHANNEL_COLORS.length] }} />
+              {c.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
-  return { status, send, reconnect: connect };
+// ── Video variable field (upload + URL in Control panel) ─────────────────────
+
+function ControlVideoField({ value, onChange }: { value: string; onChange: (url: string) => void }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const uploadFile = async (file: File) => {
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch('/api/uploads', { method: 'POST', body: fd });
+      if (!r.ok) throw new Error('Upload failed');
+      const { url } = await r.json();
+      onChange(url);
+    } catch (err) {
+      console.error('Video upload error:', err);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5 flex-1">
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="/uploads/video.webm"
+        className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:border-accent-500"
+      />
+      <button
+        onClick={() => fileRef.current?.click()}
+        disabled={uploading}
+        title="Загрузить видео"
+        className="flex-shrink-0 px-1.5 py-1 bg-surface-600 hover:bg-surface-500 disabled:opacity-40 rounded text-gray-300 transition-colors"
+      >
+        {uploading ? <RefreshCw size={11} className="animate-spin" /> : <Upload size={11} />}
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="video/webm,video/mp4"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadFile(f); e.target.value = ''; }}
+      />
+    </div>
+  );
 }
 
 // ── Status badge ─────────────────────────────────────────────────────────────
@@ -99,8 +180,7 @@ function TemplateCard({
     if (full) return full;
     setLoading(true);
     try {
-      const r = await fetch(`/api/templates/${item.id}`);
-      const row: FullTemplate = await r.json();
+      const row = await getTemplate(item.id);
       setFull(row);
       const defaults: Record<string, string> = {};
       (row.data?.variables ?? []).forEach((v: Variable) => { defaults[v.id] = String(v.defaultValue ?? ''); });
@@ -117,7 +197,6 @@ function TemplateCard({
   const handleSelect = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const row = await loadFull();
-    // Build vars: use current state if already populated, else default from template
     const defaults: Record<string, string> = {};
     (row.data?.variables ?? []).forEach((v: Variable) => { defaults[v.id] = String(v.defaultValue ?? ''); });
     const currentVars = Object.keys(vars).length > 0 ? vars : defaults;
@@ -144,7 +223,6 @@ function TemplateCard({
     } ${focused && !onAir && !isSelected ? 'ring-2 ring-white/30' : ''}`}>
       {/* Main row */}
       <div className="flex items-center gap-3 px-3 py-2">
-        {/* Thumbnail — click to preview */}
         <div
           className="flex-shrink-0 w-24 h-[54px] rounded overflow-hidden bg-surface-700 cursor-pointer ring-0 hover:ring-1 hover:ring-accent-500 transition-all"
           onClick={handleSelect}
@@ -153,7 +231,6 @@ function TemplateCard({
           <TemplateThumbnail templateId={item.id} width={192} height={108} className="w-full h-full" />
         </div>
 
-        {/* Name + badges — click to preview */}
         <div className="flex-1 min-w-0 cursor-pointer" onClick={handleSelect}>
           <span className="block font-medium text-white text-sm truncate">{item.name}</span>
           <div className="flex items-center gap-2 mt-0.5">
@@ -171,7 +248,6 @@ function TemplateCard({
           </div>
         </div>
 
-        {/* Controls */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
           <button onClick={expand} className="text-gray-600 hover:text-white transition-colors p-1">
             {loading ? <RefreshCw size={13} className="animate-spin" /> : expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
@@ -190,7 +266,6 @@ function TemplateCard({
         </div>
       </div>
 
-      {/* Variables panel */}
       {expanded && (
         <div className="border-t border-surface-700 px-3 py-2.5 space-y-2 bg-surface-800/60">
           {variables.length === 0 ? (
@@ -206,6 +281,11 @@ function TemplateCard({
                     <input type="text" value={vars[v.id] ?? String(v.defaultValue)} onChange={(e) => handleVarChange(v.id, e.target.value)}
                       className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:border-accent-500" />
                   </div>
+                ) : v.type === 'video' ? (
+                  <ControlVideoField
+                    value={vars[v.id] ?? String(v.defaultValue)}
+                    onChange={(url) => handleVarChange(v.id, url)}
+                  />
                 ) : (
                   <input type={v.type === 'number' ? 'number' : 'text'} value={vars[v.id] ?? String(v.defaultValue)}
                     onChange={(e) => handleVarChange(v.id, e.target.value)} placeholder={String(v.defaultValue)}
@@ -215,6 +295,116 @@ function TemplateCard({
             ))
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── Sortable rundown sidebar item ─────────────────────────────────────────────
+
+function SortableRundownItem({
+  rd, isActive, onAirCount, isRenaming, renameVal, rdChColor, rdChIdx, channels,
+  rundownsLength, onActivate, onStartRename, onRenameChange, onCommitRename,
+  onCancelRename, onDuplicate, onExport, onDelete,
+}: {
+  rd: RundownData;
+  isActive: boolean;
+  onAirCount: number;
+  isRenaming: boolean;
+  renameVal: string;
+  rdChColor: string | null;
+  rdChIdx: number;
+  channels: Channel[];
+  rundownsLength: number;
+  onActivate: () => void;
+  onStartRename: () => void;
+  onRenameChange: (v: string) => void;
+  onCommitRename: () => void;
+  onCancelRename: () => void;
+  onDuplicate: () => void;
+  onExport: () => void;
+  onDelete: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: rd.id });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
+      onClick={() => { if (!isRenaming) onActivate(); }}
+      className={`group relative flex items-stretch cursor-pointer transition-colors ${
+        isActive ? 'bg-accent-500/10 border-l-2 border-accent-500' : 'border-l-2 border-transparent hover:bg-surface-800'
+      }`}
+    >
+      {/* Drag handle */}
+      <div
+        {...attributes}
+        {...listeners}
+        onClick={e => e.stopPropagation()}
+        className="flex items-center pl-1.5 pr-0.5 text-gray-700 hover:text-gray-400 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+      >
+        <GripVertical size={12} />
+      </div>
+
+      {/* Content */}
+      <div className="flex flex-col flex-1 min-w-0 py-2 pr-3">
+        <div className="flex items-center gap-1.5 min-w-0">
+          {rdChColor && !isRenaming && (
+            <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full" style={{ background: rdChColor }} title={channels[rdChIdx]?.name} />
+          )}
+          {isRenaming ? (
+            <input
+              autoFocus
+              value={renameVal}
+              onChange={(e) => onRenameChange(e.target.value)}
+              onBlur={onCommitRename}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') onCommitRename();
+                if (e.key === 'Escape') onCancelRename();
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 min-w-0 bg-surface-700 border border-accent-500 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none"
+            />
+          ) : (
+            <span className={`flex-1 text-xs truncate ${isActive ? 'text-white font-medium' : 'text-gray-400'}`}>
+              {rd.name}
+            </span>
+          )}
+          {onAirCount > 0 && !isRenaming && (
+            <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" title={`${onAirCount} в эфире`} />
+          )}
+        </div>
+        {!isRenaming && (
+          <span className="text-[10px] text-gray-600 mt-0.5">
+            {rd.slots.length} {rd.slots.length === 1 ? 'слот' : rd.slots.length < 5 ? 'слота' : 'слотов'}
+          </span>
+        )}
+      </div>
+
+      {/* Action buttons (hover / active) */}
+      {!isRenaming && (
+        <div className={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 transition-opacity ${
+          isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        }`}>
+          <button onClick={(e) => { e.stopPropagation(); onStartRename(); }} title="Переименовать" className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-600 transition-colors">
+            <Pencil size={11} />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); onDuplicate(); }} title="Дублировать" className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-600 transition-colors">
+            <Copy size={11} />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); onExport(); }} title="Экспорт JSON" className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-600 transition-colors">
+            <FileDown size={11} />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Удалить" disabled={rundownsLength <= 1} className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-surface-600 disabled:opacity-20 transition-colors">
+            <Trash2 size={11} />
+          </button>
+        </div>
+      )}
+      {isRenaming && (
+        <button onClick={(e) => { e.stopPropagation(); onCommitRename(); }} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-green-400 hover:bg-surface-600">
+          <Check size={11} />
+        </button>
       )}
     </div>
   );
@@ -290,15 +480,12 @@ function SortableRundownRow({
           <span className="px-2 py-0.5 bg-accent-500/20 rounded text-xs text-accent-400 flex-shrink-0">NEXT</span>
         )}
 
-        {/* Expand toggle — only show if template has variables or is loading */}
         <button
           onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}
           className="text-gray-600 hover:text-gray-300 flex-shrink-0 transition-colors"
           title="Переменные"
         >
-          {expanded
-            ? <ChevronDown size={13} />
-            : <ChevronRight size={13} />}
+          {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </button>
 
         {status === 'on-air' ? (
@@ -336,6 +523,8 @@ function SortableRundownRow({
                       <input type="text" value={val} onChange={(e) => onVarChange(v.id, e.target.value)}
                         className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:border-accent-500" />
                     </div>
+                  ) : v.type === 'video' ? (
+                    <ControlVideoField value={val} onChange={(url) => onVarChange(v.id, url)} />
                   ) : (
                     <input
                       type={v.type === 'number' ? 'number' : 'text'}
@@ -363,6 +552,8 @@ export function ControlPage() {
   const [templates, setTemplates] = useState<TemplateListItem[]>([]);
   const [onAirSet, setOnAirSet] = useState<Set<string>>(new Set());
   const [fullCache, setFullCache] = useState<Record<string, FullTemplate>>({});
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [tmplChannelId, setTmplChannelId] = useState<string | null>(null);
   const { status, send, reconnect } = useControlWs();
 
   // ── Preview panel ───────────────────────────────────────────────────────
@@ -400,12 +591,10 @@ export function ControlPage() {
   // ── Template tab keyboard focus ─────────────────────────────────────────
   const [tmplFocusIdx, setTmplFocusIdx] = useState(0);
 
-  // Clamp when list changes
   useEffect(() => {
     if (templates.length > 0) setTmplFocusIdx((i) => Math.min(i, templates.length - 1));
   }, [templates.length]);
 
-  // Scroll focused card into view
   useEffect(() => {
     if (tab !== 'templates' || templates.length === 0) return;
     document.getElementById(`tmpl-card-${templates[tmplFocusIdx]?.id}`)
@@ -414,45 +603,174 @@ export function ControlPage() {
 
   // ── Template tab state ──────────────────────────────────────────────────
   const handleTake = useCallback(async (id: string, vars: Record<string, string>) => {
-    // Always fetch fresh so the renderer gets the latest saved version
-    const r = await fetch(`/api/templates/${id}`);
-    const fresh = await r.json();
+    const fresh = await getTemplate(id);
     setFullCache((s) => ({ ...s, [id]: fresh }));
-    send({ type: 'take', templateId: id, template: fresh.data, variables: vars });
+    send({ type: 'take', templateId: id, template: fresh.data, variables: vars, channelId: tmplChannelId ?? undefined });
     setOnAirSet((s) => new Set(s).add(id));
-  }, [send]);
+  }, [send, tmplChannelId]);
 
   const handleClear = useCallback((id: string) => {
-    send({ type: 'clear', templateId: id });
+    send({ type: 'clear', templateId: id, channelId: tmplChannelId ?? undefined });
     setOnAirSet((s) => { const n = new Set(s); n.delete(id); return n; });
-  }, [send]);
+  }, [send, tmplChannelId]);
 
   const handleUpdate = useCallback((id: string, vars: Record<string, string>) => {
-    send({ type: 'update', templateId: id, variables: vars });
-  }, [send]);
+    send({ type: 'update', templateId: id, variables: vars, channelId: tmplChannelId ?? undefined });
+  }, [send, tmplChannelId]);
 
   useEffect(() => {
-    fetch('/api/templates').then((r) => r.json()).then(setTemplates);
+    listTemplates().then(setTemplates);
   }, []);
 
-  // ── Rundown state ───────────────────────────────────────────────────────
-  const [rundown, setRundown] = useState<RundownSlot[]>(() => {
+  useEffect(() => {
+    listChannels().then((list: Channel[]) => {
+      setChannels(list);
+      if (list.length > 0) setTmplChannelId(prev => prev ?? list[0].id);
+    });
+  }, []);
+
+  // ── Rundown management state ────────────────────────────────────────────
+  const [rundowns, setRundowns] = useState<RundownData[]>([]);
+  const [activeRundownId, setActiveRundownId] = useState<string | null>(null);
+  const [loadingRundowns, setLoadingRundowns] = useState(true);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameVal, setRenameVal] = useState('');
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
+
+  // Derived: active rundown's slots (backward-compat alias)
+  const activeRundown = rundowns.find(r => r.id === activeRundownId) ?? null;
+  const rundown = activeRundown?.slots ?? [];
+
+  // Proxy setter: updates slots in the active rundown inside the rundowns array
+  const setRundown = useCallback((updater: RundownSlot[] | ((prev: RundownSlot[]) => RundownSlot[])) => {
+    setRundowns(prev => prev.map(r => {
+      if (r.id !== activeRundownId) return r;
+      const newSlots = typeof updater === 'function' ? updater(r.slots) : updater;
+      return { ...r, slots: newSlots, updated_at: Math.floor(Date.now() / 1000) };
+    }));
+  }, [activeRundownId]);
+
+  // Load rundowns + restore on-air state on mount
+  useEffect(() => {
+    setLoadingRundowns(true);
+    Promise.all([
+      listRundowns(),
+      getOnAir().catch(() => ({})),
+    ])
+      .then(async ([list, onAirData]: [RundownData[], Record<string, string[]>]) => {
+        // Restore on-air IDs from backend state
+        const allIds: string[] = Object.values(onAirData).flat();
+        if (allIds.length > 0) setOnAirSet(new Set(allIds));
+
+        if (list.length === 0) {
+          // Auto-create first rundown
+          const created = await apiCreateRundown({ name: 'Rundown 1', slots: [] });
+          setRundowns([created]);
+          setActiveRundownId(created.id);
+        } else {
+          setRundowns(list);
+          setActiveRundownId(list[0].id);
+          // rdOnAirSet: subset of on-air IDs that match slot IDs in any rundown
+          if (allIds.length > 0) {
+            const allSlotIds = new Set(list.flatMap(rd => rd.slots.map(s => s.slotId)));
+            const rdIds = allIds.filter(id => allSlotIds.has(id));
+            if (rdIds.length > 0) setRdOnAirSet(new Set(rdIds));
+          }
+        }
+      })
+      .finally(() => setLoadingRundowns(false));
+  }, []);
+
+  // Auto-save active rundown's slots to backend (debounced 500ms)
+  useEffect(() => {
+    if (!activeRundownId || loadingRundowns) return;
+    saveTimerRef.current && clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      const rd = rundowns.find(r => r.id === activeRundownId);
+      if (!rd) return;
+      await updateRundown(activeRundownId, { name: rd.name, slots: rd.slots });
+    }, 500);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rundowns, activeRundownId]);
+
+  // ── Rundown CRUD actions ────────────────────────────────────────────────
+  const createRundown = useCallback(async () => {
+    const name = `Rundown ${rundowns.length + 1}`;
+    const created = await apiCreateRundown({ name, slots: [] });
+    setRundowns(prev => [created, ...prev]);
+    setActiveRundownId(created.id);
+  }, [rundowns.length]);
+
+  const deleteRundown = useCallback(async (id: string) => {
+    if (rundowns.length <= 1) return;
+    await apiDeleteRundown(id);
+    setRundowns(prev => {
+      const next = prev.filter(r => r.id !== id);
+      if (activeRundownId === id) setActiveRundownId(next[0]?.id ?? null);
+      return next;
+    });
+  }, [rundowns.length, activeRundownId]);
+
+  const duplicateRundown = useCallback(async (id: string) => {
+    const src = rundowns.find(r => r.id === id);
+    if (!src) return;
+    const created = await apiCreateRundown({
+      name: src.name + ' (копия)',
+      slots: src.slots.map(s => ({ ...s, slotId: generateId() })),
+    });
+    setRundowns(prev => [created, ...prev]);
+    setActiveRundownId(created.id);
+  }, [rundowns]);
+
+  const commitRename = useCallback(async (id: string) => {
+    const trimmed = renameVal.trim();
+    if (!trimmed) { setRenamingId(null); return; }
+    await updateRundown(id, { name: trimmed });
+    setRundowns(prev => prev.map(r => r.id === id ? { ...r, name: trimmed } : r));
+    setRenamingId(null);
+  }, [renameVal]);
+
+  const exportRundown = useCallback((id: string) => {
+    const rd = rundowns.find(r => r.id === id);
+    if (!rd) return;
+    const blob = new Blob([JSON.stringify(rd, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${rd.name.replace(/[^a-z0-9а-яё]/gi, '_')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [rundowns]);
+
+  const importRundown = useCallback(async (file: File) => {
     try {
-      const saved = localStorage.getItem('broadcast-rundown');
-      return saved ? (JSON.parse(saved) as RundownSlot[]) : [];
-    } catch { return []; }
-  });
+      const text = await file.text();
+      const data = JSON.parse(text) as Partial<RundownData>;
+      const created = await apiCreateRundown({
+        name: data.name ?? 'Импортированный rundown',
+        slots: (data.slots ?? []).map(s => ({ ...s, slotId: generateId() })),
+      });
+      setRundowns(prev => [created, ...prev]);
+      setActiveRundownId(created.id);
+    } catch (err) {
+      console.error('Import error:', err);
+    }
+  }, []);
+
+  // ── Rundown slot state ──────────────────────────────────────────────────
   const [rdOnAirSet, setRdOnAirSet] = useState<Set<string>>(new Set());
   const [rdFocusIdx, setRdFocusIdx] = useState(0);
 
-  useEffect(() => {
-    localStorage.setItem('broadcast-rundown', JSON.stringify(rundown));
-  }, [rundown]);
-
-  // Clamp focus when rundown shrinks
+  // Clamp focus when rundown changes
   useEffect(() => {
     if (rundown.length > 0) setRdFocusIdx(i => Math.min(i, rundown.length - 1));
   }, [rundown.length]);
+
+  // Reset focus when switching rundowns
+  useEffect(() => {
+    setRdFocusIdx(0);
+  }, [activeRundownId]);
 
   // Scroll focused item into view
   useEffect(() => {
@@ -461,14 +779,14 @@ export function ControlPage() {
         ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   }, [rdFocusIdx]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [expandedSlots, setExpandedSlots] = useState<Set<string>>(new Set());
   const liveUpdateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const rdFetchTemplate = useCallback(async (templateId: string): Promise<FullTemplate> => {
     if (fullCache[templateId]) return fullCache[templateId];
-    const r = await fetch(`/api/templates/${templateId}`);
-    const data = await r.json();
+    const data = await getTemplate(templateId);
     setFullCache((s) => ({ ...s, [templateId]: data }));
     return data;
   }, [fullCache]);
@@ -489,7 +807,6 @@ export function ControlPage() {
       next.add(slotId);
       return next;
     });
-    // Pre-fetch template so variables appear immediately on expand
     const slot = rundown.find((s) => s.slotId === slotId);
     if (slot && !fullCache[slot.templateId]) rdFetchTemplate(slot.templateId);
   }, [rundown, fullCache, rdFetchTemplate]);
@@ -499,7 +816,6 @@ export function ControlPage() {
       s.slotId === slotId ? { ...s, vars: { ...s.vars, [varId]: value } } : s
     ));
 
-    // Live update if this slot is currently on-air
     if (!rdOnAirSet.has(slotId)) return;
     const slot = rundown.find((s) => s.slotId === slotId);
     if (!slot) return;
@@ -512,32 +828,37 @@ export function ControlPage() {
       (full.data?.variables ?? []).forEach((v: Variable) => {
         vars[v.id] = slot.vars[v.id] ?? String(v.defaultValue ?? '');
       });
-      vars[varId] = value; // apply the latest change
-      send({ type: 'update', templateId: slotId, variables: vars });
+      vars[varId] = value;
+      send({ type: 'update', templateId: slotId, variables: vars, channelId: activeRundown?.channelId ?? undefined });
     }, 300);
-  }, [rundown, rdOnAirSet, fullCache, send]);
+  }, [rundown, rdOnAirSet, fullCache, send, setRundown, activeRundown]);
+
+  const setRundownChannel = useCallback((id: string, channelId: string | null) => {
+    setRundowns(prev => prev.map(r => r.id === id ? { ...r, channelId } : r));
+    updateRundown(id, { channelId });
+  }, []);
 
   const rdTakeAt = useCallback(async (index: number) => {
     if (index < 0 || index >= rundown.length) return;
     const slot = rundown[index];
-    // Always fetch fresh so the renderer gets the latest saved version
-    const r = await fetch(`/api/templates/${slot.templateId}`);
-    const full: FullTemplate = await r.json();
+    const full = await getTemplate(slot.templateId);
     setFullCache((s) => ({ ...s, [slot.templateId]: full }));
     const vars: Record<string, string> = {};
     (full.data?.variables ?? []).forEach((v: Variable) => {
       vars[v.id] = slot.vars[v.id] ?? String(v.defaultValue ?? '');
     });
-    send({ type: 'take', templateId: slot.slotId, template: full.data, variables: vars });
+    const channelId = activeRundown?.channelId ?? undefined;
+    send({ type: 'take', templateId: slot.slotId, template: full.data, variables: vars, channelId });
     setOnAirSet((s) => new Set(s).add(slot.slotId));
     setRdOnAirSet((s) => new Set(s).add(slot.slotId));
-  }, [rundown, send]);
+  }, [rundown, send, activeRundown]);
 
   const rdClearSlot = useCallback((slotId: string) => {
-    send({ type: 'clear', templateId: slotId });
+    const channelId = activeRundown?.channelId ?? undefined;
+    send({ type: 'clear', templateId: slotId, channelId });
     setOnAirSet((s) => { const n = new Set(s); n.delete(slotId); return n; });
     setRdOnAirSet((s) => { const n = new Set(s); n.delete(slotId); return n; });
-  }, [send]);
+  }, [send, activeRundown]);
 
   // Keyboard navigation for rundown tab
   useEffect(() => {
@@ -569,12 +890,26 @@ export function ControlPage() {
   }, [tab, rundown, rdFocusIdx, rdTakeAt, rdOnAirSet, rdClearSlot]);
 
   const rdClearAll = useCallback(() => {
-    rdOnAirSet.forEach((slotId) => {
-      send({ type: 'clear', templateId: slotId });
-      setOnAirSet((s) => { const n = new Set(s); n.delete(slotId); return n; });
+    const channelId = activeRundown?.channelId ?? undefined;
+    const toClear = rundown.filter((slot) => rdOnAirSet.has(slot.slotId));
+    if (toClear.length === 0) return;
+
+    toClear.forEach((slot) => {
+      send({ type: 'clear', templateId: slot.slotId, channelId });
     });
-    setRdOnAirSet(new Set());
-  }, [rdOnAirSet, send]);
+
+    const clearedIds = new Set(toClear.map((s) => s.slotId));
+    setOnAirSet((prev) => {
+      const next = new Set(prev);
+      clearedIds.forEach((id) => next.delete(id));
+      return next;
+    });
+    setRdOnAirSet((prev) => {
+      const next = new Set(prev);
+      clearedIds.forEach((id) => next.delete(id));
+      return next;
+    });
+  }, [rundown, rdOnAirSet, send, activeRundown]);
 
   // Auto-preview focused rundown slot
   useEffect(() => {
@@ -595,7 +930,7 @@ export function ControlPage() {
   const rdRemoveSlot = useCallback((slotId: string) => {
     if (rdOnAirSet.has(slotId)) rdClearSlot(slotId);
     setRundown((prev) => prev.filter((s) => s.slotId !== slotId));
-  }, [rdOnAirSet, rdClearSlot]);
+  }, [rdOnAirSet, rdClearSlot, setRundown]);
 
   const rdHandleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
@@ -607,6 +942,19 @@ export function ControlPage() {
       const next = [...prev];
       const [item] = next.splice(from, 1);
       next.splice(to, 0, item);
+      return next;
+    });
+  }, [setRundown]);
+
+  const handleRundownsDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setRundowns(prev => {
+      const from = prev.findIndex(r => r.id === active.id);
+      const to   = prev.findIndex(r => r.id === over.id);
+      if (from === -1 || to === -1) return prev;
+      const next = arrayMove(prev, from, to);
+      reorderRundowns(next.map(r => r.id));
       return next;
     });
   }, []);
@@ -655,6 +1003,11 @@ export function ControlPage() {
   const canNext = rdFocusIdx < rundown.length - 1;
   const canPrev = rdFocusIdx > 0;
 
+  // Count on-air slots across ALL rundowns (for a given rundown in the sidebar)
+  const onAirCountForRundown = useCallback((rd: RundownData) => {
+    return rd.slots.filter(s => rdOnAirSet.has(s.slotId)).length;
+  }, [rdOnAirSet]);
+
   return (
     <div className="h-screen bg-surface-900 flex flex-col overflow-hidden">
       {/* Header */}
@@ -671,6 +1024,9 @@ export function ControlPage() {
           </span>
         )}
         <div className="flex-1" />
+        <button onClick={() => navigate('/settings')} className="p-1.5 hover:bg-surface-700 rounded text-gray-500 hover:text-white" title="Настройки каналов">
+          <Settings size={15} />
+        </button>
         <WsStatusBadge status={status} onReconnect={reconnect} />
       </div>
 
@@ -691,8 +1047,8 @@ export function ControlPage() {
           }`}
         >
           <List size={13} /> Rundown
-          {rundown.length > 0 && (
-            <span className="px-1.5 py-0.5 bg-surface-600 rounded-full text-gray-400">{rundown.length}</span>
+          {rundowns.length > 0 && (
+            <span className="px-1.5 py-0.5 bg-surface-600 rounded-full text-gray-400">{rundowns.length}</span>
           )}
         </button>
       </div>
@@ -706,7 +1062,6 @@ export function ControlPage() {
       {/* Templates tab */}
       {tab === 'templates' && (
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Hints + CLEAR ALL bar */}
           <div className="flex items-center gap-3 px-4 py-2 border-b border-surface-700 bg-surface-800/50 flex-shrink-0">
             <span className="text-xs text-gray-600 select-none flex items-center gap-2">
               <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>↑↓</kbd>
@@ -717,6 +1072,9 @@ export function ControlPage() {
               <span>убрать</span>
             </span>
             <div className="flex-1" />
+            {channels.length > 0 && (
+              <ChannelBadge channels={channels} value={tmplChannelId} onChange={setTmplChannelId} />
+            )}
             {onAirSet.size > 0 && (
               <>
                 <span className="text-xs text-gray-400">{onAirSet.size} в эфире</span>
@@ -760,120 +1118,211 @@ export function ControlPage() {
 
       {/* Rundown tab */}
       {tab === 'rundown' && (
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Transport bar */}
-          <div className="flex items-center gap-3 px-6 py-3 border-b border-surface-700 bg-surface-800/50 flex-shrink-0">
-            <button
-              onClick={() => { const i = rdFocusIdx - 1; setRdFocusIdx(Math.max(0, i)); rdTakeAt(Math.max(0, i)); }}
-              disabled={!canPrev}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-surface-700 hover:bg-surface-600 disabled:opacity-30 text-gray-300 transition-colors"
-              title="Предыдущий"
-            >
-              <SkipBack size={13} /> PREV
-            </button>
+        <div className="flex-1 flex overflow-hidden">
 
-            <span className="text-xs text-gray-500 min-w-[3rem] text-center">
-              {rdFocusIdx + 1} / {rundown.length || '—'}
-            </span>
+          {/* ── Left sidebar: rundowns list ─────────────────────────────── */}
+          <div className="w-52 border-r border-surface-700 bg-surface-950 flex flex-col flex-shrink-0">
+            {/* Sidebar header */}
+            <div className="flex items-center gap-1.5 px-3 py-2.5 border-b border-surface-700 flex-shrink-0">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex-1">Rundowns</span>
+              {/* Import */}
+              <button
+                onClick={() => importFileRef.current?.click()}
+                title="Импорт из JSON"
+                className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-700 transition-colors"
+              >
+                <FileUp size={13} />
+              </button>
+              <input
+                ref={importFileRef}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) importRundown(f); e.target.value = ''; }}
+              />
+              {/* Create */}
+              <button
+                onClick={createRundown}
+                title="Создать rundown"
+                className="p-1 rounded text-gray-500 hover:text-white hover:bg-surface-700 transition-colors"
+              >
+                <Plus size={13} />
+              </button>
+            </div>
 
-            <button
-              onClick={() => { const i = rdFocusIdx + 1; setRdFocusIdx(Math.min(rundown.length - 1, i)); rdTakeAt(i); }}
-              disabled={!canNext}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded text-xs font-bold bg-accent-500 hover:bg-accent-600 disabled:opacity-30 text-white transition-colors"
-              title="Следующий"
-            >
-              NEXT <SkipForward size={13} />
-            </button>
-
-            <button
-              onClick={rdClearAll}
-              disabled={rdOnAirSet.size === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-surface-700 hover:bg-surface-600 disabled:opacity-30 text-gray-300 transition-colors"
-              title="Убрать всё из эфира"
-            >
-              <Square size={12} /> CLEAR ALL
-            </button>
-
-            <div className="flex-1" />
-            <span className="text-xs text-gray-600 select-none hidden sm:flex items-center gap-2">
-              <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>↑↓</kbd>
-              <span>навигация</span>
-              <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>⎵</kbd>
-              <span>взять</span>
-              <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>⌫</kbd>
-              <span>убрать</span>
-            </span>
-          </div>
-
-          {/* Rundown list */}
-          <div className="flex-1 overflow-y-auto p-6">
-            <div className="max-w-3xl mx-auto space-y-2">
-              {rundown.length === 0 ? (
-                <div className="text-center py-16 text-gray-600">
-                  <List size={32} className="mx-auto mb-3 opacity-30" />
-                  <p className="text-sm">Rundown пустой</p>
-                  <p className="text-xs mt-1">Нажмите «+ Добавить» чтобы добавить шаблоны</p>
+            {/* Rundowns list */}
+            <div className="flex-1 overflow-y-auto py-1">
+              {loadingRundowns ? (
+                <div className="flex items-center justify-center py-8 text-gray-600">
+                  <RefreshCw size={16} className="animate-spin" />
                 </div>
               ) : (
-                <DndContext collisionDetection={closestCenter} onDragEnd={rdHandleDragEnd}>
-                  <SortableContext items={rundown.map((s) => s.slotId)} strategy={verticalListSortingStrategy}>
-                    {rundown.map((slot, i) => {
-                      const onAir = rdOnAirSet.has(slot.slotId);
-                      const slotStatus = onAir ? 'on-air' : i === rdFocusIdx ? 'next' : 'pending';
+                <DndContext collisionDetection={closestCenter} onDragEnd={handleRundownsDragEnd}>
+                  <SortableContext items={rundowns.map(r => r.id)} strategy={verticalListSortingStrategy}>
+                    {rundowns.map(rd => {
+                      const isActive   = rd.id === activeRundownId;
+                      const onAirCount = onAirCountForRundown(rd);
+                      const isRenaming = renamingId === rd.id;
+                      const rdChIdx    = rd.channelId ? channels.findIndex(c => c.id === rd.channelId) : -1;
+                      const rdChColor  = rdChIdx >= 0 ? CHANNEL_COLORS[rdChIdx % CHANNEL_COLORS.length] : null;
                       return (
-                        <SortableRundownRow
-                          key={slot.slotId}
-                          slot={slot} index={i}
-                          status={slotStatus}
-                          focused={i === rdFocusIdx}
-                          full={fullCache[slot.templateId] ?? null}
-                          expanded={expandedSlots.has(slot.slotId)}
-                          onTake={() => { rdTakeAt(i); setRdFocusIdx(Math.min(i + 1, rundown.length - 1)); }}
-                          onClear={() => rdClearSlot(slot.slotId)}
-                          onRemove={() => rdRemoveSlot(slot.slotId)}
-                          onToggleExpand={() => toggleSlotExpand(slot.slotId)}
-                          onVarChange={(varId, value) => updateSlotVar(slot.slotId, varId, value)}
-                          onNeedFull={() => rdFetchTemplate(slot.templateId)}
-                          onFocus={() => setRdFocusIdx(i)}
+                        <SortableRundownItem
+                          key={rd.id}
+                          rd={rd}
+                          isActive={isActive}
+                          onAirCount={onAirCount}
+                          isRenaming={isRenaming}
+                          renameVal={renameVal}
+                          rdChColor={rdChColor}
+                          rdChIdx={rdChIdx}
+                          channels={channels}
+                          rundownsLength={rundowns.length}
+                          onActivate={() => setActiveRundownId(rd.id)}
+                          onStartRename={() => { setRenamingId(rd.id); setRenameVal(rd.name); }}
+                          onRenameChange={setRenameVal}
+                          onCommitRename={() => commitRename(rd.id)}
+                          onCancelRename={() => setRenamingId(null)}
+                          onDuplicate={() => duplicateRundown(rd.id)}
+                          onExport={() => exportRundown(rd.id)}
+                          onDelete={() => deleteRundown(rd.id)}
                         />
                       );
                     })}
                   </SortableContext>
                 </DndContext>
               )}
+            </div>
+          </div>
 
-              {/* Add button */}
-              <div className="relative pt-2">
-                <button
-                  onClick={() => setShowAddMenu((v) => !v)}
-                  className="flex items-center gap-2 w-full px-4 py-2.5 rounded-lg border border-dashed border-surface-600 text-gray-500 hover:border-accent-500 hover:text-accent-400 text-sm transition-colors"
-                >
-                  <Plus size={14} /> Добавить шаблон
-                </button>
+          {/* ── Right panel: active rundown slots ──────────────────────── */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Transport bar */}
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-surface-700 bg-surface-800/50 flex-shrink-0">
+              <button
+                onClick={() => { const i = rdFocusIdx - 1; setRdFocusIdx(Math.max(0, i)); rdTakeAt(Math.max(0, i)); }}
+                disabled={!canPrev}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-surface-700 hover:bg-surface-600 disabled:opacity-30 text-gray-300 transition-colors"
+                title="Предыдущий"
+              >
+                <SkipBack size={13} /> PREV
+              </button>
 
-                {showAddMenu && (
-                  <div className="absolute left-0 right-0 mt-1 bg-surface-800 border border-surface-600 rounded-xl shadow-xl z-10 max-h-64 overflow-y-auto">
-                    {templates.length === 0 ? (
-                      <p className="px-4 py-3 text-xs text-gray-500">Нет шаблонов</p>
-                    ) : (
-                      templates.map((t) => (
-                        <button
-                          key={t.id}
-                          onClick={() => {
-                            setRundown((prev) => [...prev, { slotId: crypto.randomUUID(), templateId: t.id, name: t.name, vars: {} }]);
-                            setShowAddMenu(false);
-                          }}
-                          className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-surface-700 hover:text-white transition-colors"
-                        >
-                          {t.name}
-                        </button>
-                      ))
-                    )}
+              <span className="text-xs text-gray-500 min-w-[3rem] text-center">
+                {rdFocusIdx + 1} / {rundown.length || '—'}
+              </span>
+
+              <button
+                onClick={() => { const i = rdFocusIdx + 1; setRdFocusIdx(Math.min(rundown.length - 1, i)); rdTakeAt(i); }}
+                disabled={!canNext}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded text-xs font-bold bg-accent-500 hover:bg-accent-600 disabled:opacity-30 text-white transition-colors"
+                title="Следующий"
+              >
+                NEXT <SkipForward size={13} />
+              </button>
+
+              <button
+                onClick={rdClearAll}
+                disabled={rdOnAirSet.size === 0}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-surface-700 hover:bg-surface-600 disabled:opacity-30 text-gray-300 transition-colors"
+                title="Убрать всё из эфира"
+              >
+                <Square size={12} /> CLEAR ALL
+              </button>
+
+              {/* Active rundown name + channel */}
+              <span className="text-xs text-gray-500 truncate hidden sm:block">
+                {activeRundown?.name ?? ''}
+              </span>
+              {channels.length > 0 && activeRundown && (
+                <ChannelBadge
+                  channels={channels}
+                  value={activeRundown.channelId}
+                  onChange={(id) => setRundownChannel(activeRundown.id, id)}
+                />
+              )}
+
+              <div className="flex-1" />
+              <span className="text-xs text-gray-600 select-none hidden sm:flex items-center gap-2">
+                <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>↑↓</kbd>
+                <span>навигация</span>
+                <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>⎵</kbd>
+                <span>взять</span>
+                <kbd className="px-1.5 py-0.5 bg-surface-700 border border-surface-600 rounded text-gray-400" style={{ fontSize: 10 }}>⌫</kbd>
+                <span>убрать</span>
+              </span>
+            </div>
+
+            {/* Rundown list */}
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="max-w-3xl mx-auto space-y-2">
+                {rundown.length === 0 ? (
+                  <div className="text-center py-16 text-gray-600">
+                    <List size={32} className="mx-auto mb-3 opacity-30" />
+                    <p className="text-sm">Rundown пустой</p>
+                    <p className="text-xs mt-1">Нажмите «+ Добавить» чтобы добавить шаблоны</p>
                   </div>
+                ) : (
+                  <DndContext collisionDetection={closestCenter} onDragEnd={rdHandleDragEnd}>
+                    <SortableContext items={rundown.map((s) => s.slotId)} strategy={verticalListSortingStrategy}>
+                      {rundown.map((slot, i) => {
+                        const onAir = rdOnAirSet.has(slot.slotId);
+                        const slotStatus = onAir ? 'on-air' : i === rdFocusIdx ? 'next' : 'pending';
+                        return (
+                          <SortableRundownRow
+                            key={slot.slotId}
+                            slot={slot} index={i}
+                            status={slotStatus}
+                            focused={i === rdFocusIdx}
+                            full={fullCache[slot.templateId] ?? null}
+                            expanded={expandedSlots.has(slot.slotId)}
+                            onTake={() => { rdTakeAt(i); setRdFocusIdx(Math.min(i + 1, rundown.length - 1)); }}
+                            onClear={() => rdClearSlot(slot.slotId)}
+                            onRemove={() => rdRemoveSlot(slot.slotId)}
+                            onToggleExpand={() => toggleSlotExpand(slot.slotId)}
+                            onVarChange={(varId, value) => updateSlotVar(slot.slotId, varId, value)}
+                            onNeedFull={() => rdFetchTemplate(slot.templateId)}
+                            onFocus={() => setRdFocusIdx(i)}
+                          />
+                        );
+                      })}
+                    </SortableContext>
+                  </DndContext>
                 )}
+
+                {/* Add button */}
+                <div className="relative pt-2">
+                  <button
+                    onClick={() => setShowAddMenu((v) => !v)}
+                    className="flex items-center gap-2 w-full px-4 py-2.5 rounded-lg border border-dashed border-surface-600 text-gray-500 hover:border-accent-500 hover:text-accent-400 text-sm transition-colors"
+                  >
+                    <Plus size={14} /> Добавить шаблон
+                  </button>
+
+                  {showAddMenu && (
+                    <div className="absolute left-0 right-0 mt-1 bg-surface-800 border border-surface-600 rounded-xl shadow-xl z-10 max-h-64 overflow-y-auto">
+                      {templates.length === 0 ? (
+                        <p className="px-4 py-3 text-xs text-gray-500">Нет шаблонов</p>
+                      ) : (
+                        templates.map((t) => (
+                          <button
+                            key={t.id}
+                            onClick={() => {
+                              setRundown((prev) => [...prev, { slotId: generateId(), templateId: t.id, name: t.name, vars: {} }]);
+                              setShowAddMenu(false);
+                            }}
+                            className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-surface-700 hover:text-white transition-colors"
+                          >
+                            {t.name}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
+
         </div>
       )}
 
@@ -881,7 +1330,6 @@ export function ControlPage() {
 
       {/* ── Preview panel ────────────────────────────────────────────── */}
       <div className="w-72 xl:w-96 border-l border-surface-700 bg-surface-950 flex flex-col flex-shrink-0">
-        {/* Header */}
         <div className="px-4 py-3 border-b border-surface-700 flex items-center gap-2 flex-shrink-0">
           <Monitor size={13} className="text-accent-400" />
           <span className="text-xs font-semibold text-white uppercase tracking-wider">Preview</span>
@@ -890,7 +1338,6 @@ export function ControlPage() {
           )}
         </div>
 
-        {/* 16:9 iframe */}
         <div className="p-3 flex-shrink-0">
           <div
             className="relative w-full rounded overflow-hidden border border-surface-700 bg-[#0a0a0f]"

@@ -1,22 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Edit2, Trash2, Tv, Check, X, Copy, Upload } from 'lucide-react';
+import { Plus, Edit2, Trash2, Tv, Check, X, Copy, Upload, Settings, Sparkles } from 'lucide-react';
 import { TemplateThumbnail } from '../features/templates/TemplateThumbnail';
-
-interface TemplateItem { id: string; name: string; updated_at: number; }
+import { generateId } from '../core/id';
+import { createTemplate, deleteTemplate, getTemplate, listTemplates } from '../features/templates/api';
+import type { TemplateItem } from '../features/templates/types';
+import type { Template } from '../core/schema';
+import { GenerateTemplatePanel } from '../features/llm/GenerateTemplatePanel';
 
 export function TemplatesPage() {
   const [templates, setTemplates] = useState<TemplateItem[]>([]);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [showAiPanel, setShowAiPanel] = useState(false);
   const [newName, setNewName] = useState('Новый шаблон');
   const inputRef = useRef<HTMLInputElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
   const load = async () => {
-    const r = await fetch('/api/templates');
-    setTemplates(await r.json());
+    setTemplates(await listTemplates());
   };
 
   useEffect(() => { load(); }, []);
@@ -28,23 +31,27 @@ export function TemplatesPage() {
   const createNew = async () => {
     const name = newName.trim();
     if (!name) return;
-    const defaultTemplate = {
-      id: crypto.randomUUID(),
+    const defaultTemplate: Template = {
+      id: generateId(),
       name,
       canvas: { width: 1920, height: 1080, background: 'transparent' },
-      variables: [], layers: [], tracks: [],
+      variables: [], groups: [], layers: [],
+      timeline: {
+        fps: 50,
+        durationFrames: 500,
+        playbackMode: 'bounded',
+        directors: [{ id: 'default', name: 'default', durationFrames: 125, offsetFrames: 0, autostart: true, loop: false }],
+        trackDirectors: {},
+        keyframes: [],
+        actions: [],
+      },
     };
-    const r = await fetch('/api/templates', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, data: defaultTemplate }),
-    });
-    const { id } = await r.json();
+    const { id } = await createTemplate(name, defaultTemplate);
     navigate(`/editor/${id}`);
   };
 
   const remove = async (id: string) => {
-    await fetch(`/api/templates/${id}`, { method: 'DELETE' });
+    await deleteTemplate(id);
     setConfirmingId(null);
     load();
   };
@@ -56,12 +63,8 @@ export function TemplatesPage() {
       const text = await file.text();
       const data = JSON.parse(text);
       const name = data.name ?? file.name.replace(/\.json$/, '');
-      const newData = { ...data, id: crypto.randomUUID() };
-      await fetch('/api/templates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, data: newData }),
-      });
+      const newData = { ...data, id: generateId() };
+      await createTemplate(name, newData);
       load();
     } catch {
       alert('Ошибка импорта: неверный формат файла');
@@ -71,14 +74,9 @@ export function TemplatesPage() {
   };
 
   const duplicate = async (t: TemplateItem) => {
-    const r = await fetch(`/api/templates/${t.id}`);
-    const { data } = (await r.json());
-    const newData = { ...data, id: crypto.randomUUID(), name: `${t.name} (копия)` };
-    await fetch('/api/templates', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newData.name, data: newData }),
-    });
+    const { data } = await getTemplate(t.id);
+    const newData = { ...data, id: generateId(), name: `${t.name} (копия)` };
+    await createTemplate(newData.name, newData);
     load();
   };
 
@@ -89,10 +87,24 @@ export function TemplatesPage() {
           <h1 className="text-2xl font-bold text-white">Шаблоны графики</h1>
           <div className="flex gap-3">
             <button
+              onClick={() => navigate('/settings')}
+              className="flex items-center gap-2 px-4 py-2 bg-surface-700 hover:bg-surface-600 rounded-lg text-sm transition-colors text-gray-400"
+              title="Настройки DeckLink"
+            >
+              <Settings size={16} />
+            </button>
+            <button
               onClick={() => navigate('/control')}
               className="flex items-center gap-2 px-4 py-2 bg-surface-700 hover:bg-surface-600 rounded-lg text-sm transition-colors"
             >
               <Tv size={16} /> Control Panel
+            </button>
+            <button
+              onClick={() => setShowAiPanel((v) => !v)}
+              className="flex items-center gap-2 px-4 py-2 bg-surface-700 hover:bg-surface-600 rounded-lg text-sm transition-colors"
+              title="Сгенерировать шаблон через локальную LLM"
+            >
+              <Sparkles size={16} /> AI шаблон
             </button>
             <button
               onClick={() => importRef.current?.click()}
@@ -142,6 +154,13 @@ export function TemplatesPage() {
             )}
           </div>
         </div>
+
+        {showAiPanel && (
+          <GenerateTemplatePanel
+            onCreated={(id) => navigate(`/editor/${id}`)}
+            onCancel={() => setShowAiPanel(false)}
+          />
+        )}
 
         {templates.length === 0 ? (
           <div className="text-center py-24 text-gray-500">
