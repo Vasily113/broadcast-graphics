@@ -32,7 +32,7 @@ baseline-сценарии должны продолжать работать.
 
 ### Карен: Team Lead, Architecture, Backend, Shared, LLM
 
-Карен — тимлид и владелец foundation-ветки `karen`.
+Карен — тимлид и владелец foundation-ветки `refactoring-v1`.
 
 Основная зона:
 
@@ -126,7 +126,7 @@ Cursor Agent должен:
 ## Git Workflow
 
 - `MVP` — защищённая интеграционная ветка.
-- `karen` — foundation/team lead ветка Карена.
+- `refactoring-v1` — foundation/team lead ветка Карена.
 - Прямые коммиты в `MVP` запрещены.
 - Все изменения проходят через PR.
 - Карен review-ит каждый PR.
@@ -139,8 +139,9 @@ Cursor Agent должен:
 - `feature/lead/<task>`
 - `fix/<owner>/<task>`
 
-Пока `karen` не влита в `MVP`, feature-ветки можно создавать от `karen`. После
-merge foundation в `MVP` новые задачи создавать от `MVP`.
+Пока `refactoring-v1` не влита в `MVP`, feature-ветки можно создавать от
+`refactoring-v1`. После merge foundation в `MVP` новые задачи создавать от
+`MVP`.
 
 ## Required Local Checks
 

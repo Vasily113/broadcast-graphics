@@ -40,7 +40,7 @@ Current owner zones:
 Branch rules:
 
 - `MVP` is the protected integration branch.
-- `karen` is Karen's foundation/team lead branch.
+- `refactoring-v1` is Karen's foundation/team lead branch.
 - Feature branches should be short-lived and owner-prefixed.
 - All changes go through PR review by Karen before merging to `MVP`.
 

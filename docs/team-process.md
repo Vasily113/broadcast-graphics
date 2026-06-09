@@ -6,7 +6,7 @@
 ## Ветки
 
 - `MVP` — защищённая интеграционная ветка.
-- `karen` — foundation/team lead ветка Карена.
+- `refactoring-v1` — foundation/team lead ветка Карена.
 - `feature/sergey/<task>` — задачи Сергея.
 - `feature/vasily/<task>` — задачи Василия.
 - `feature/lead/<task>` — задачи Карена после foundation.
@@ -17,12 +17,12 @@
 Пока foundation не влита:
 
 ```bash
-git checkout karen
+git checkout refactoring-v1
 git pull
 git checkout -b feature/<owner>/<task>
 ```
 
-После merge `karen` в `MVP`:
+После merge `refactoring-v1` в `MVP`:
 
 ```bash
 git checkout MVP

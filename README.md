@@ -86,7 +86,7 @@ broadcast-graphics/
 ## Рабочие Ветки
 
 - `MVP` — защищенная интеграционная ветка.
-- `karen` — foundation/team lead ветка Карена.
+- `refactoring-v1` — foundation/team lead ветка Карена.
 - `feature/sergey/<task>` — задачи Сергея в editor-зоне.
 - `feature/vasily/<task>` — задачи Василия в templates/rundowns/control-зоне.
 - `feature/lead/<task>` — задачи тимлида после foundation.
