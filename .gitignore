@@ -44,6 +44,3 @@ decklink-out/addon/bmd-sdk/
 
 # Worktrees / agent artifacts (local)
 .claude/worktrees/
-
-# DeckLink SDK sample media over GitHub file size limit (keep locally)
-Blackmagic DeckLink SDK 16.0/Win/DirectShow/Samples/DecklinkKey/res/*.avi
