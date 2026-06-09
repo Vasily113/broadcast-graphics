@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "calibri",
+      "family": "calibri",
+      "regular": "calibri.ttf",
+      "bold": null
+    }
+  ]
+}
