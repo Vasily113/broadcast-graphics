@@ -5,8 +5,8 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
 FRONTEND_DIR="$ROOT_DIR/frontend"
 
-BACKEND_PORT="${BACKEND_PORT:-4001}"
-FRONTEND_PORT="${FRONTEND_PORT:-4000}"
+BACKEND_PORT="${BACKEND_PORT:-3001}"
+FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
 
 PIDS=()
@@ -64,13 +64,14 @@ echo "Backend:  http://localhost:$BACKEND_PORT"
 echo "Frontend: http://localhost:$FRONTEND_PORT"
 echo
 
-if [[ ! -d "$ROOT_DIR/node_modules" ]]; then
-  echo "Dependencies not installed. Run: npm install"
+if [[ ! -d "$BACKEND_DIR/node_modules" ]]; then
+  echo "Backend dependencies not installed. Run: (cd backend && npm install)"
   exit 1
 fi
-
-echo "Building shared contracts and backend..."
-(cd "$ROOT_DIR" && npm run build -w @broadcast-graphics/shared && npm run build -w @broadcast-graphics/backend)
+if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
+  echo "Frontend dependencies not installed. Run: (cd frontend && npm install)"
+  exit 1
+fi
 
 if [[ "${STOP_STALE:-0}" == "1" ]]; then
   "$ROOT_DIR/stop.sh" || true
@@ -93,7 +94,6 @@ echo "Backend is up on port $BACKEND_PORT"
 
 (
   cd "$FRONTEND_DIR"
-  export BACKEND_PORT="$BACKEND_PORT"
   exec npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --strictPort
 ) &
 PIDS+=("$!")
