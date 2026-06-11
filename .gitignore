@@ -28,6 +28,7 @@ frontend/.vite/
 frontend/tsconfig.tsbuildinfo
 
 # Electron / native addon build outputs
+Blackmagic DeckLink SDK*/
 decklink-out/addon/build/
 decklink-out/addon/Release/
 decklink-out/addon/Debug/

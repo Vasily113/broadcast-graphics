@@ -5,6 +5,8 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLAYOUT_DIR="$ROOT_DIR/../playoutd"
 OUT_BIN="$ROOT_DIR/decklink-channeld"
 
+bash "$ROOT_DIR/../addon/prepare-bmd-sdk.sh"
+
 CXXFLAGS=(
   -std=c++17
   -O2

@@ -5,8 +5,8 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "build-addon": "cd addon && ../node_modules/.bin/node-gyp rebuild --arch=x64 --target=28.3.3 --dist-url=https://electronjs.org/headers",
-    "build-channeld": "cd channeld && ./build.sh",
+    "build-addon": "cd addon && node ../node_modules/node-gyp/bin/node-gyp.js rebuild --arch=x64 --target=28.3.3 --dist-url=https://electronjs.org/headers",
+    "build-channeld": "bash channeld/build.sh",
     "build-playoutd": "cd playoutd && chmod +x build.sh && ./build.sh"
   },
   "dependencies": {

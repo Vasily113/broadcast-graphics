@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DECKLINK_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/decklink-out" && pwd)"
+REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+DECKLINK_DIR="$REPO_ROOT/decklink-out"
 
 echo "Building DeckLink native addon for Electron 28..."
 
@@ -11,18 +12,9 @@ if ! python3 -c "import distutils" 2>/dev/null; then
   exit 1
 fi
 
-cd "$DECKLINK_DIR"
+bash "$DECKLINK_DIR/addon/prepare-bmd-sdk.sh"
 
-# node-gyp cannot compile sources whose path contains spaces — use bmd-sdk/ wrapper
-BMD_SDK="$DECKLINK_DIR/addon/bmd-sdk"
-if [[ ! -f "$BMD_SDK/DeckLinkAPIDispatch.cpp" ]]; then
-  mkdir -p "$BMD_SDK"
-  cp "$DECKLINK_DIR/../../Blackmagic DeckLink SDK 16.0/Linux/include/DeckLinkAPIDispatch.cpp" \
-     "$BMD_SDK/DeckLinkAPIDispatch.cpp"
-fi
-if [[ ! -e "$BMD_SDK/include" ]]; then
-  ln -sfn "../../../Blackmagic DeckLink SDK 16.0/Linux/include" "$BMD_SDK/include"
-fi
+cd "$DECKLINK_DIR"
 
 if [[ ! -d node_modules ]]; then
   echo "Installing decklink-out dependencies..."
